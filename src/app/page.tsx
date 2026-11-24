@@ -490,7 +490,6 @@ export default function MaatramApp() {
                         <div
                           key={student.id}
                           onClick={() => {
-                            setSelectedVolunteerId(null);
                             setSelectedStudentId((prev) => (prev === student.id ? null : student.id));
                           }}
                           className={`student-card ${makeWholeCardRed ? "high-income" : ""} ${
@@ -596,7 +595,6 @@ export default function MaatramApp() {
                         <div
                           key={vol.id}
                           onClick={() => {
-                            setSelectedStudentId(null);
                             setSelectedVolunteerId((prev) => (prev === vol.id ? null : vol.id));
                           }}
                           className={`volunteer-card ${
