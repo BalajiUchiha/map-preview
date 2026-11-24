@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
-import { DISTRICTS, District, Student, Volunteer } from "@/data/districts";
+import { DISTRICTS, District, Student, Volunteer, getDistanceKm } from "@/data/districts";
 
 // Load Leaflet Map on client-side only (SSR: false)
 const DistrictMap = dynamic(() => import("@/components/DistrictMap"), {
@@ -38,6 +38,27 @@ export default function MaatramApp() {
   const [volunteerSearchQuery, setVolunteerSearchQuery] = useState("");
 
   const splitContainerRef = useRef<HTMLDivElement>(null);
+  const activeVolunteerCardRef = useRef<HTMLDivElement>(null);
+
+  const handleSelectVolunteer = (id: string | null) => {
+    setSelectedVolunteerId(id);
+    if (id) {
+      setActiveTab("volunteers");
+    }
+  };
+
+  // Auto-scroll to selected volunteer card in sidebar when clicked on map or list
+  useEffect(() => {
+    if (selectedVolunteerId && activeTab === "volunteers") {
+      const timer = setTimeout(() => {
+        activeVolunteerCardRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+        });
+      }, 80);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedVolunteerId, activeTab]);
 
   // When switching tabs or filters, clear active selection to auto-centerise view and clear lines
   const handleTabChange = (tab: TabType) => {
@@ -148,6 +169,21 @@ export default function MaatramApp() {
     }
     return list;
   }, [selectedDistrict, volunteerSearchQuery]);
+
+  // Nearby students for the active selected volunteer (closest within 5km)
+  const nearbyStudentsForActiveVol = useMemo(() => {
+    if (!selectedDistrict || !selectedVolunteerId) return [];
+    const currentVol = selectedDistrict.volunteers.find((v) => v.id === selectedVolunteerId);
+    if (!currentVol) return [];
+    const allSorted = selectedDistrict.students
+      .map((s) => ({
+        student: s,
+        dist: getDistanceKm(currentVol.lat, currentVol.lng, s.lat, s.lng),
+      }))
+      .sort((a, b) => a.dist - b.dist);
+    const within5 = allSorted.filter((item) => item.dist <= 5.0);
+    return within5.length > 0 ? within5 : allSorted.slice(0, 4);
+  }, [selectedDistrict, selectedVolunteerId]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#F5F5F2] text-[#111111] overflow-hidden">
@@ -286,7 +322,7 @@ export default function MaatramApp() {
               selectedStudentId={selectedStudentId}
               selectedVolunteerId={selectedVolunteerId}
               onSelectStudent={setSelectedStudentId}
-              onSelectVolunteer={setSelectedVolunteerId}
+              onSelectVolunteer={handleSelectVolunteer}
             />
           </div>
 
@@ -587,48 +623,141 @@ export default function MaatramApp() {
                     )}
                   </div>
 
-                  {/* Volunteer Cards */}
+                  {/* Volunteer Cards (Collapsible: med/small by default, expanded on select) */}
                   <div className="space-y-2.5">
                     {filteredVolunteers.map((vol) => {
                       const isSelected = selectedVolunteerId === vol.id;
                       return (
                         <div
                           key={vol.id}
-                          onClick={() => {
-                            setSelectedVolunteerId((prev) => (prev === vol.id ? null : vol.id));
-                          }}
-                          className={`volunteer-card ${
-                            isSelected ? "!bg-[#FFF9DF] !border-black !translate-x-[-2px] !translate-y-[-2px] !shadow-[7px_7px_0_#111]" : ""
+                          ref={isSelected ? activeVolunteerCardRef : undefined}
+                          className={`volunteer-card transition-all duration-150 ${
+                            isSelected
+                              ? "!bg-[#FFFDF0] !border-black !shadow-[6px_6px_0_#111] ring-2 ring-[#FFC20E] !translate-x-[-1px] !translate-y-[-1px]"
+                              : "hover:bg-[#FFF9DF] hover:shadow-[5px_5px_0_#111]"
                           }`}
                         >
-                          <div className="flex justify-between items-start gap-1">
-                            <div>
-                              <div className="student-name">
-                                {vol.name}
+                          {/* Card Summary Header (Clicking toggles expand/collapse) */}
+                          <div
+                            onClick={() => {
+                              setSelectedVolunteerId((prev) => (prev === vol.id ? null : vol.id));
+                            }}
+                            className="cursor-pointer"
+                          >
+                            <div className="flex justify-between items-start gap-1">
+                              <div>
+                                <div className="student-name flex items-center gap-1.5">
+                                  <span>{vol.name}</span>
+                                  {isSelected && (
+                                    <span className="text-[9px] bg-[#FFD600] text-black font-mono px-1 py-0.2 rounded border border-black font-black">
+                                      EXPANDED
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-[#555] font-semibold mt-0.5 truncate font-mono">
+                                  🎓 {vol.college}
+                                </div>
                               </div>
-                              <div className="text-[10px] text-[#555] font-semibold mt-0.5 truncate font-mono">
-                                🎓 {vol.college} {isSelected && "• (Showing Distances)"}
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-[8px] font-mono bg-black text-[#FFC20E] px-1.5 py-0.5 rounded font-bold">
+                                  LEADER
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedVolunteerId((prev) => (prev === vol.id ? null : vol.id));
+                                  }}
+                                  className="text-[10px] font-mono font-black px-1.5 py-0.5 border border-black bg-white rounded hover:bg-gray-100 cursor-pointer"
+                                  title={isSelected ? "Collapse card" : "Expand details"}
+                                >
+                                  {isSelected ? "▲" : "▼"}
+                                </button>
                               </div>
                             </div>
-                            <span className="text-[8px] font-mono bg-black text-[#FFC20E] px-1.5 py-0.5 rounded font-bold shrink-0">
-                              LEADER
-                            </span>
+
+                            {/* Med-level compact PV metrics */}
+                            <div className="mt-2 pt-1.5 border-t border-black/15 grid grid-cols-2 gap-1.5 font-mono text-[10px]">
+                              <div className="bg-[#DDF5E6] border border-[#16834A] rounded px-1.5 py-0.5 flex justify-between items-center">
+                                <span className="text-[#16834A] text-[9px] font-bold uppercase">PV Count:</span>
+                                <span className="font-black text-xs text-[#16834A]">{vol.pvCount}</span>
+                              </div>
+                              <div className="bg-gray-100 border border-black rounded px-1.5 py-0.5 flex justify-between items-center">
+                                <span className="text-[#555] text-[9px] font-bold uppercase">Assigned:</span>
+                                <span className="font-black text-xs text-[#111]">{vol.pvAssigned}</span>
+                              </div>
+                            </div>
                           </div>
 
-                          <div className="mt-2.5 pt-2 border-t-2 border-[#111] grid grid-cols-3 gap-1.5 font-mono text-[10px] text-center">
-                            <div className="bg-[#DDF5E6] border border-[#16834A] rounded p-1">
-                              <div className="text-[8px] text-[#16834A] uppercase font-bold">PV Count</div>
-                              <div className="font-black text-xs text-[#16834A]">{vol.pvCount}</div>
+                          {/* Expanded Content: Visible when this volunteer is selected */}
+                          {isSelected && (
+                            <div className="mt-2.5 pt-2 border-t-2 border-black animate-in fade-in duration-150">
+                              <div className="flex items-center justify-between mb-1.5 font-mono">
+                                <span className="text-[9px] uppercase text-[#111] font-black tracking-wide">
+                                  📍 Nearby Students ({nearbyStudentsForActiveVol.length})
+                                </span>
+                                <span className="text-[8px] text-green-700 font-bold bg-[#DDF5E6] px-1 py-0.2 rounded border border-[#16834A]">
+                                  &le; 5 km reach
+                                </span>
+                              </div>
+
+                              {/* Scrollable list of nearby students */}
+                              <div className="max-h-48 overflow-y-auto space-y-1 pr-1 font-mono">
+                                {nearbyStudentsForActiveVol.map(({ student: s, dist }) => {
+                                  const isStudentActive = selectedStudentId === s.id;
+                                  return (
+                                    <div
+                                      key={s.id}
+                                      onClick={() => {
+                                        setSelectedStudentId((prev) => (prev === s.id ? null : s.id));
+                                      }}
+                                      className={`flex items-center justify-between p-1.5 rounded border-2 cursor-pointer transition-all ${
+                                        isStudentActive
+                                          ? "bg-[#FFD600] border-black font-black shadow-[2px_2px_0_#111] translate-x-1"
+                                          : "bg-white hover:bg-[#FFF9DF] border-gray-300 hover:border-black"
+                                      }`}
+                                      title="Click to draw line & view student form on map"
+                                    >
+                                      <div className="flex items-center gap-1.5 truncate text-[11px]">
+                                        <span
+                                          className={`w-2 h-2 rounded-full shrink-0 ${
+                                            s.opted === "Eng" ? "bg-[#2457C5]" : "bg-[#B85A12]"
+                                          }`}
+                                        />
+                                        <span className="truncate font-sans font-bold">{s.name}</span>
+                                        <span className="text-[9px] text-[#666]">({s.opted})</span>
+                                      </div>
+
+                                      <span
+                                        className={`text-[9px] font-mono font-black px-1.5 py-0.5 rounded shrink-0 border ${
+                                          dist <= 5.0
+                                            ? "bg-[#DDF5E6] text-[#16834A] border-[#16834A]"
+                                            : "bg-[#FFE9E5] text-[#D92D20] border-[#D92D20]"
+                                        }`}
+                                      >
+                                        ⚡ {dist} km
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Expanded Card Footer Controls */}
+                              <div className="mt-2.5 pt-2 border-t border-black/15 flex items-center justify-between font-mono text-[10px]">
+                                <span className="text-[#666]">Near Reach: <b>{vol.nearToApplicants}</b></span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedVolunteerId(null);
+                                    setSelectedStudentId(null);
+                                  }}
+                                  className="px-2 py-0.5 bg-black text-[#FFC20E] rounded text-[9px] font-bold hover:bg-gray-800 cursor-pointer"
+                                >
+                                  Collapse ✕
+                                </button>
+                              </div>
                             </div>
-                            <div className="bg-gray-100 border border-black rounded p-1">
-                              <div className="text-[8px] text-[#555] uppercase font-bold">Assigned</div>
-                              <div className="font-black text-xs text-[#111]">{vol.pvAssigned}</div>
-                            </div>
-                            <div className="bg-[#FFF0D9] border border-[#B85A12] rounded p-1">
-                              <div className="text-[8px] text-[#B85A12] uppercase font-bold">Near Appls</div>
-                              <div className="font-black text-xs text-[#B85A12]">{vol.nearToApplicants}</div>
-                            </div>
-                          </div>
+                          )}
                         </div>
                       );
                     })}

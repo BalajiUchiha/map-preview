@@ -37,7 +37,9 @@ function getLineColor(dist: number): string {
   return dist <= 5.0 ? "#16A34A" : "#DC2626";
 }
 
-// Student Dot Icon (Bigger, Color-coded, prominent selection ring)
+// Modern, Minimal CSS Student Marker
+// Small, clean blue circular marker with a subtle white border (#2563EB)
+// Alert students (> 1L / Own House) use vibrant alert red (#DC2626)
 const createStudentDotIcon = (
   opted: string,
   isHighIncome: boolean,
@@ -45,60 +47,69 @@ const createStudentDotIcon = (
   isSelected: boolean,
   opacity: number
 ) => {
-  const isRedEntity = isHighIncome || hasOwnHouse;
-  const bg = isRedEntity ? "#D92D20" : opted === "Eng" ? "#2457C5" : "#B85A12";
-  const ring = isSelected ? "#FFD600" : isRedEntity ? "#912018" : "#111111";
-  const size = isSelected ? 24 : 19;
+  const isAlert = isHighIncome || hasOwnHouse;
+  const bg = isAlert ? "#DC2626" : "#2563EB";
+  const size = isSelected ? 15 : 10;
+
+  // Selected student: highlighted circle with distinctive dual-ring halo
+  const boxShadow = isSelected
+    ? "0 0 0 2px #FFFFFF, 0 0 0 4.5px #2563EB, 0 2px 6px rgba(0,0,0,0.35)"
+    : "0 0 0 1.5px #FFFFFF, 0 0 0 2px rgba(17,24,39,0.35), 0 1px 3px rgba(0,0,0,0.25)";
 
   return L.divIcon({
-    className: "student-dot",
+    className: "modern-student-marker",
     html: `
       <div style="
         width: ${size}px;
         height: ${size}px;
         background: ${bg};
-        border: ${isSelected ? "3.5px" : "2.5px"} solid ${ring};
         border-radius: 50%;
-        box-shadow: ${isSelected ? "0 0 0 3px #111, 4px 4px 0 #111" : "2px 2px 0 #111"};
+        box-shadow: ${boxShadow};
         opacity: ${opacity};
         transform: translate(-50%, -50%);
-        transition: all 0.2s ease;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
         cursor: pointer;
-        ${isRedEntity && !isSelected ? "outline: 2px solid #D92D20; outline-offset: 1px;" : ""}
-      ">
-        <div style="width: ${isSelected ? 7 : 5}px; height: ${isSelected ? 7 : 5}px; background: #FFFFFF; border-radius: 50%;"></div>
-      </div>
+      "></div>
     `,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
 };
 
-// Volunteer Diamond Icon
+// Modern, Minimal CSS Volunteer Marker
+// Green circular ring with dark outer border (#16A34A ring + #111 border)
 const createVolunteerDotIcon = (isSelected: boolean, opacity: number) => {
-  const size = isSelected ? 28 : 22;
+  const size = isSelected ? 17 : 13;
+
+  // Selected volunteer: distinctive outer halo/ring making selection unmistakable
+  const boxShadow = isSelected
+    ? "0 0 0 2.5px #FFFFFF, 0 0 0 5px #16A34A, 0 2px 8px rgba(0,0,0,0.4)"
+    : "0 0 0 1px #111111, 0 1px 3px rgba(0,0,0,0.3)";
+
   return L.divIcon({
-    className: "volunteer-dot",
+    className: "modern-volunteer-marker",
     html: `
       <div style="
         width: ${size}px;
         height: ${size}px;
-        background: #111111;
-        border: ${isSelected ? "3.5px" : "2.5px"} solid #FFC20E;
-        border-radius: 4px;
-        box-shadow: ${isSelected ? "0 0 0 3px #111, 4px 4px 0 #111" : "2.5px 2.5px 0 #111"};
+        background: #FFFFFF;
+        border: ${isSelected ? "3.5px" : "2.5px"} solid #16A34A;
+        border-radius: 50%;
+        box-shadow: ${boxShadow};
+        opacity: ${opacity};
+        transform: translate(-50%, -50%);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        opacity: ${opacity};
-        transform: translate(-50%, -50%) rotate(45deg);
-        transition: all 0.2s ease;
-        cursor: pointer;
       ">
-        <div style="width: ${isSelected ? 9 : 6}px; height: ${isSelected ? 9 : 6}px; background: #FFC20E; border-radius: 50%;"></div>
+        <div style="
+          width: ${isSelected ? 4 : 3}px;
+          height: ${isSelected ? 4 : 3}px;
+          background: #111111;
+          border-radius: 50%;
+        "></div>
       </div>
     `,
     iconSize: [size, size],
@@ -112,22 +123,22 @@ const createHqIcon = (opacity: number) =>
     html: `
       <div style="
         background: #FFC20E;
-        border: 2.5px solid #111;
+        border: 2px solid #111;
         border-radius: 50%;
-        width: 28px;
-        height: 28px;
+        width: 22px;
+        height: 22px;
         display: grid;
         place-items: center;
-        font-size: 14px;
-        box-shadow: 3px 3px 0 #111;
+        font-size: 11px;
+        box-shadow: 2px 2px 0 #111;
         opacity: ${opacity};
         transform: translate(-50%, -50%);
         transition: opacity 0.25s ease;
         cursor: pointer;
       ">🏛️</div>
     `,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
   });
 
 // Map Controller for Zoom tracking, map clicks and auto-focus
@@ -314,8 +325,58 @@ export default function DistrictMap({
   }, [selectedVolunteer, selectedStudent]);
 
   // STRICT Volunteer-to-Student Connection Lines
-  // Connects selected volunteer to ALL students in the district (green <= 5km, red > 5km)
+  // Connects volunteer to ONLY nearby students (<= 5km) or single direct pair line when a student is selected
   const activeConnections = useMemo(() => {
+    // CASE 1: Both Volunteer AND Student selected -> Show ONLY the single direct line between them!
+    if (selectedVolunteer && selectedStudent) {
+      const dist = getDistanceKm(
+        selectedVolunteer.lat,
+        selectedVolunteer.lng,
+        selectedStudent.lat,
+        selectedStudent.lng
+      );
+      return [
+        {
+          id: `pair-${selectedVolunteer.id}-${selectedStudent.id}`,
+          volunteerId: selectedVolunteer.id,
+          studentId: selectedStudent.id,
+          from: [selectedVolunteer.lat, selectedVolunteer.lng] as [number, number],
+          to: [selectedStudent.lat, selectedStudent.lng] as [number, number],
+          dist,
+          color: getLineColor(dist),
+          isFocus: true,
+          isSelectedPair: true,
+        },
+      ];
+    }
+
+    // CASE 2: Only Volunteer selected -> Show ONLY closest nearby students within 5 km (max 3)
+    if (selectedVolunteer) {
+      const nearby = students
+        .map((s) => ({
+          student: s,
+          dist: getDistanceKm(selectedVolunteer.lat, selectedVolunteer.lng, s.lat, s.lng),
+        }))
+        .filter((item) => item.dist <= 5.0)
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, 3);
+
+      return nearby.map((item) => ({
+        id: `focus-${selectedVolunteer.id}-${item.student.id}`,
+        volunteerId: selectedVolunteer.id,
+        studentId: item.student.id,
+        from: [selectedVolunteer.lat, selectedVolunteer.lng] as [number, number],
+        to: [item.student.lat, item.student.lng] as [number, number],
+        dist: item.dist,
+        color: "#16834A",
+        isFocus: true,
+        isSelectedPair: false,
+      }));
+    }
+
+    if (!showDefaultLines) return [];
+
+    // CASE 3: No volunteer selected -> show 1 closest line per volunteer (<= 5km)
     const lines: {
       id: string;
       volunteerId: string;
@@ -328,30 +389,6 @@ export default function DistrictMap({
       isSelectedPair: boolean;
     }[] = [];
 
-    // CASE 1: Volunteer is selected -> show lines to ALL students in the district!
-    if (selectedVolunteer) {
-      students.forEach((s) => {
-        const dist = getDistanceKm(selectedVolunteer.lat, selectedVolunteer.lng, s.lat, s.lng);
-        const isSelectedPair = selectedStudent?.id === s.id;
-        lines.push({
-          id: `focus-${selectedVolunteer.id}-${s.id}`,
-          volunteerId: selectedVolunteer.id,
-          studentId: s.id,
-          from: [selectedVolunteer.lat, selectedVolunteer.lng],
-          to: [s.lat, s.lng],
-          dist,
-          color: getLineColor(dist),
-          isFocus: true,
-          isSelectedPair,
-        });
-      });
-      // Sort so the selected pair renders on top
-      return lines.sort((a, b) => (a.isSelectedPair ? 1 : 0) - (b.isSelectedPair ? 1 : 0));
-    }
-
-    if (!showDefaultLines) return [];
-
-    // CASE 2: No volunteer selected -> show default nearest lines (<= 5km)
     volunteers.forEach((v) => {
       let closestStudent = students[0];
       let minDist = 9999;
@@ -373,7 +410,7 @@ export default function DistrictMap({
           dist: minDist,
           color: "#16834A",
           isFocus: false,
-          isSelectedPair: selectedStudent?.id === closestStudent.id,
+          isSelectedPair: false,
         });
       }
     });
@@ -385,45 +422,44 @@ export default function DistrictMap({
 
   return (
     <div className="relative h-full w-full bg-[#f4f4f0] overflow-hidden select-none">
-      {/* PROMINENT BIGGER LEGEND BOX */}
-      <div className="absolute top-3.5 right-3.5 z-[1000] bg-white/95 backdrop-blur-md border-[2.5px] border-black rounded-[8px] shadow-[3px_3px_0_#111] px-4 py-2 flex items-center gap-3 font-mono text-xs">
+      {/* MODERN MINIMAL LEGEND BOX */}
+      <div className="absolute top-3.5 right-3.5 z-[1000] bg-white/95 backdrop-blur-md border-[2px] border-black rounded-[8px] shadow-[3px_3px_0_#111] px-3.5 py-1.5 flex items-center gap-3 font-mono text-xs">
         <span className="font-black text-sm uppercase tracking-wider text-black">{district.name}</span>
-        <div className="h-4 w-[2px] bg-black/25"></div>
+        <div className="h-4 w-[2px] bg-black/20"></div>
         <div className="flex items-center gap-3 text-xs font-bold">
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded-full bg-[#2457C5] border-2 border-black shadow-[1px_1px_0_#111]"></span>
-            <span>Engineering</span>
+          <div className="flex items-center gap-1.5" title="Student applicant">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#2563EB] shadow-[0_0_0_1.5px_#fff,0_0_0_2px_#111]"></span>
+            <span>Students</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded-full bg-[#B85A12] border-2 border-black shadow-[1px_1px_0_#111]"></span>
-            <span>Arts</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded-sm bg-[#111] border-2 border-[#FFC20E] shadow-[1px_1px_0_#111]"></span>
+          <div className="flex items-center gap-1.5" title="Volunteer verifier (green ring)">
+            <span className="w-3 h-3 rounded-full bg-white border-[2.5px] border-[#16A34A] shadow-[0_0_0_1px_#111] flex items-center justify-center">
+              <span className="w-1 h-1 rounded-full bg-[#111]"></span>
+            </span>
             <span>Volunteers</span>
+          </div>
+          <div className="flex items-center gap-1.5" title="Priority status: Income > 1L or Own House">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#DC2626] shadow-[0_0_0_1.5px_#fff,0_0_0_2px_#111]"></span>
+            <span>Alert</span>
           </div>
         </div>
       </div>
 
-      {/* ACTIVE SELECTION BANNER */}
-      {(selectedStudent || selectedVolunteer) && (
-        <div className="absolute top-3.5 left-3.5 z-[1000] bg-[#FFD600] border-2 border-black rounded-[6px] shadow-[2px_2px_0_#111] px-3 py-1.5 text-xs font-mono font-bold flex items-center gap-2.5">
-          <span>
-            {selectedVolunteer && selectedStudent
-              ? `🤝 ${selectedVolunteer.name} ➔ 🎯 ${selectedStudent.name} (${pairDistanceKm} km)`
-              : selectedStudent
-              ? `🎯 Focused Student: ${selectedStudent.name}`
-              : `🤝 Focused Volunteer: ${selectedVolunteer?.name}`}
+      {/* ACTIVE SELECTION BANNER (Shown when only volunteer is focused) */}
+      {selectedVolunteer && !selectedStudent && (
+        <div className="absolute top-3.5 left-12 z-[1000] bg-white border-2 border-black rounded-[6px] shadow-[3px_3px_0_#111] px-3 py-1.5 text-xs font-mono font-bold flex items-center gap-2.5">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm bg-black border border-[#FFC20E] shrink-0" />
+            <span>🤝 Focused: {selectedVolunteer.name}</span>
+            <span className="text-[10px] text-gray-500 font-normal">({selectedVolunteer.college})</span>
           </span>
           <button
             onClick={() => {
-              onSelectStudent(null);
               onSelectVolunteer(null);
               setRecenterCount((c) => c + 1);
             }}
             className="px-2 py-0.5 bg-black text-[#FFC20E] rounded text-[10px] cursor-pointer hover:bg-gray-800 transition-colors"
           >
-            Clear Focus ✕
+            Clear ✕
           </button>
         </div>
       )}
@@ -431,7 +467,7 @@ export default function DistrictMap({
       {/* FLOATING STUDENT APPLICATION FORM DETAILS WINDOW (When a student is clicked) */}
       {selectedStudent && (
         <div
-          className={`absolute top-14 left-3.5 z-[1001] w-[295px] max-w-[88vw] rounded-[4px] p-3 text-xs animate-in fade-in zoom-in-95 duration-150 ${
+          className={`absolute top-3.5 left-12 z-[1001] w-[295px] max-w-[88vw] rounded-[4px] p-3 text-xs animate-in fade-in zoom-in-95 duration-150 ${
             selectedStudent.familyIncome > 100000 || selectedStudent.ownHouse === "Yes"
               ? "bg-[#FFE9E5] border-[3px] border-[#D92D20] shadow-[5px_5px_0px_#D92D20]"
               : "bg-white border-[3px] border-[#111111] shadow-[5px_5px_0px_#111111]"
@@ -721,83 +757,7 @@ export default function DistrictMap({
           );
         })}
 
-        {/* DEDICATED COMPACT POPUP FOR CLICKED VOLUNTEER (Shows immediately on click) */}
-        {selectedVolunteer && (
-          <Popup
-            key={`focused-volunteer-${selectedVolunteer.id}`}
-            position={[selectedVolunteer.lat, selectedVolunteer.lng]}
-            offset={[0, -14]}
-            autoPan={false}
-          >
-            <div className="p-1 font-sans text-xs w-[220px]">
-              <div className="flex justify-between items-center gap-1.5 pb-1 border-b border-black/15">
-                <span className="font-black text-sm text-[#111] truncate">
-                  {selectedVolunteer.name}
-                </span>
-                <span className="px-1.5 py-0.5 bg-black text-[#FFC20E] rounded text-[9px] font-mono font-bold shrink-0">
-                  VOLUNTEER
-                </span>
-              </div>
-
-              <div className="text-[10px] text-[#555] font-semibold mt-1 truncate">
-                🎓 {selectedVolunteer.college}
-              </div>
-
-              <div className="mt-1.5 flex items-center justify-between font-mono text-[10px] bg-yellow-50 p-1 border border-black/20 rounded">
-                <span>PV: <b>{selectedVolunteer.pvCount}</b></span>
-                <span>Assigned: <b>{selectedVolunteer.pvAssigned}</b></span>
-                <span className="text-green-700 font-bold">Near: {selectedVolunteer.nearToApplicants}</span>
-              </div>
-
-              {/* Connected Students List: Click to show full student form details in floating window */}
-              <div className="mt-2 pt-1 border-t border-black/10">
-                <div className="text-[9px] font-mono uppercase text-[#777] font-bold mb-1">
-                  Connected Students ({studentsWithDistance.length}):
-                </div>
-                <div className="max-h-[135px] overflow-y-auto space-y-1 pr-1 font-mono">
-                  {studentsWithDistance.map(({ student: s, dist }) => {
-                    const isStudentSelected = selectedStudentId === s.id;
-                    return (
-                      <div
-                        key={s.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectStudent(s.id);
-                        }}
-                        className={`flex items-center justify-between px-1.5 py-1 rounded border cursor-pointer transition-all ${
-                          isStudentSelected
-                            ? "bg-[#FFD600] border-black font-black shadow-[1.5px_1.5px_0_#111]"
-                            : "bg-white hover:bg-[#FFF9DF] border-gray-300 hover:border-black"
-                        }`}
-                        title="Click to inspect student application form"
-                      >
-                        <div className="flex items-center gap-1.5 truncate text-[10px]">
-                          <span
-                            className={`w-2 h-2 rounded-full shrink-0 ${
-                              s.opted === "Eng" ? "bg-[#2457C5]" : "bg-[#B85A12]"
-                            }`}
-                          />
-                          <span className="truncate">{s.name}</span>
-                        </div>
-                        <span
-                          className={`text-[9px] font-bold px-1 rounded shrink-0 ${
-                            dist <= 5.0
-                              ? "bg-[#DDF5E6] text-[#16834A] border border-[#16834A]"
-                              : "bg-[#FFE9E5] text-[#D92D20] border border-[#D92D20]"
-                          }`}
-                        >
-                          {dist} km
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </Popup>
-        )}
-
-        {/* ALL VOLUNTEERS RENDERED */}
+        {/* ALL VOLUNTEERS RENDERED (No clipping popups above pins) */}
         {volunteers.map((vol) => {
           const isSelected = selectedVolunteerId === vol.id;
           return (
