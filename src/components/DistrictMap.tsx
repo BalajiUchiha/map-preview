@@ -11,9 +11,11 @@ import {
   useMapEvents,
   Polyline,
   Tooltip,
+  GeoJSON,
 } from "react-leaflet";
 import L from "leaflet";
 import { District, Student, Volunteer } from "@/data/districts";
+import { getDistrictBoundary } from "@/data/districtBoundaries";
 
 // Haversine distance calculator in kilometers
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -147,23 +149,56 @@ function MapInteractionController({
     zoomend() {
       onZoomChange(map.getZoom());
     },
-    click(e) {
+    click() {
       onClearFocus();
     },
   });
 
-  // Initial district lock
-  useEffect(() => {
-    const sw = L.latLng(district.lat - district.delta, district.lng - district.delta);
-    const ne = L.latLng(district.lat + district.delta, district.lng + district.delta);
-    const bounds = L.latLngBounds(sw, ne);
+  const boundary = useMemo(() => getDistrictBoundary(district.name), [district.name]);
 
-    map.fitBounds(bounds, { padding: [0, 0] });
-    const fitZoom = map.getBoundsZoom(bounds);
-    map.setMinZoom(fitZoom);
-    map.setMaxBounds(bounds);
-    onZoomChange(fitZoom);
-  }, [district, map, onZoomChange]);
+  const { urbanBounds, maxBounds } = useMemo(() => {
+    if (boundary) {
+      const uSw = L.latLng(boundary.urbanBounds[0][0], boundary.urbanBounds[0][1]);
+      const uNe = L.latLng(boundary.urbanBounds[1][0], boundary.urbanBounds[1][1]);
+      const mSw = L.latLng(boundary.maxBounds[0][0], boundary.maxBounds[0][1]);
+      const mNe = L.latLng(boundary.maxBounds[1][0], boundary.maxBounds[1][1]);
+      return {
+        urbanBounds: L.latLngBounds(uSw, uNe),
+        maxBounds: L.latLngBounds(mSw, mNe),
+      };
+    }
+    const sw = L.latLng(district.lat - 0.12, district.lng - 0.12);
+    const ne = L.latLng(district.lat + 0.12, district.lng + 0.12);
+    const b = L.latLngBounds(sw, ne);
+    return { urbanBounds: b, maxBounds: b };
+  }, [boundary, district]);
+
+  // Handle window/container dynamic resize (split-screen drag, mobile orientation)
+  useEffect(() => {
+    const handleResize = () => {
+      map.invalidateSize();
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [map]);
+
+  // Initial district lock & urban-focused boundaries
+  useEffect(() => {
+    map.invalidateSize();
+    map.setMaxBounds(maxBounds);
+    map.options.maxBoundsViscosity = 1.0;
+
+    // Adapt scale dynamically to container dimensions (desktop split vs mobile card)
+    const fitZoom = map.getBoundsZoom(urbanBounds, false, L.point(16, 16));
+    map.setMinZoom(Math.max(10, fitZoom - 0.6));
+
+    map.fitBounds(urbanBounds, {
+      padding: [16, 16],
+      maxZoom: 14,
+      animate: false,
+    });
+    onZoomChange(map.getZoom());
+  }, [district, urbanBounds, maxBounds, map, onZoomChange]);
 
   // Zoom into selected Student
   useEffect(() => {
@@ -179,15 +214,12 @@ function MapInteractionController({
     }
   }, [selectedVolunteer, map]);
 
-  // Centerise view back to district bounds
+  // Centerise view back to district urban bounds
   useEffect(() => {
     if (recenterTrigger > 0 || (!selectedStudent && !selectedVolunteer)) {
-      const sw = L.latLng(district.lat - district.delta, district.lng - district.delta);
-      const ne = L.latLng(district.lat + district.delta, district.lng + district.delta);
-      const bounds = L.latLngBounds(sw, ne);
-      map.flyToBounds(bounds, { duration: 0.6, padding: [0, 0] });
+      map.flyToBounds(urbanBounds, { duration: 0.6, padding: [16, 16], maxZoom: 14 });
     }
-  }, [recenterTrigger, selectedStudent, selectedVolunteer, district, map]);
+  }, [recenterTrigger, selectedStudent, selectedVolunteer, urbanBounds, map]);
 
   return null;
 }
@@ -215,7 +247,7 @@ export default function DistrictMap({
   const [isDimmed, setIsDimmed] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
   const [showDefaultLines, setShowDefaultLines] = useState(true);
-  const [currentZoom, setCurrentZoom] = useState(11);
+  const [currentZoom, setCurrentZoom] = useState(12);
 
   const selectedStudent = useMemo(
     () => students.find((s) => s.id === selectedStudentId) || null,
@@ -227,12 +259,19 @@ export default function DistrictMap({
     [volunteers, selectedVolunteerId]
   );
 
-  // Square bounding box coordinates
-  const bounds = useMemo(() => {
-    const sw = L.latLng(district.lat - district.delta, district.lng - district.delta);
-    const ne = L.latLng(district.lat + district.delta, district.lng + district.delta);
+  const districtBoundary = useMemo(() => getDistrictBoundary(district.name), [district.name]);
+
+  // Administrative max bounds with 5km buffer
+  const initialMaxBounds = useMemo(() => {
+    if (districtBoundary) {
+      const sw = L.latLng(districtBoundary.maxBounds[0][0], districtBoundary.maxBounds[0][1]);
+      const ne = L.latLng(districtBoundary.maxBounds[1][0], districtBoundary.maxBounds[1][1]);
+      return L.latLngBounds(sw, ne);
+    }
+    const sw = L.latLng(district.lat - 0.12, district.lng - 0.12);
+    const ne = L.latLng(district.lat + 0.12, district.lng + 0.12);
     return L.latLngBounds(sw, ne);
-  }, [district]);
+  }, [district, districtBoundary]);
 
   // STRICT Volunteer-to-Student Connection Lines
   const activeConnections = useMemo(() => {
@@ -413,15 +452,16 @@ export default function DistrictMap({
       </div>
 
       <MapContainer
-        center={[district.lat, district.lng]}
-        zoom={11}
+        key={`map-container-${district.name}`}
+        center={districtBoundary ? districtBoundary.urbanCenter : [district.lat, district.lng]}
+        zoom={12}
         minZoom={10}
         maxZoom={16}
-        maxBounds={bounds}
+        maxBounds={initialMaxBounds}
         maxBoundsViscosity={1.0}
         wheelPxPerZoomLevel={160}
         wheelDebounceTime={80}
-        zoomSnap={0.5}
+        zoomSnap={0.25}
         scrollWheelZoom={true}
         className="h-full w-full"
       >
@@ -441,6 +481,23 @@ export default function DistrictMap({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+
+        {/* DISTRICT ADMINISTRATIVE BOUNDARY GEOJSON LAYER */}
+        {districtBoundary && (
+          <GeoJSON
+            key={`boundary-layer-${district.name}`}
+            data={districtBoundary as any}
+            style={() => ({
+              color: "#111111",
+              weight: 2.5,
+              dashArray: "4, 4",
+              fillColor: "#FFC20E",
+              fillOpacity: 0.05,
+              lineCap: "round",
+              lineJoin: "round",
+            })}
+          />
+        )}
 
         {/* PROXIMITY CONNECTION LINES: STRICTLY VOLUNTEER TO STUDENT */}
         {activeConnections.map((conn) => {

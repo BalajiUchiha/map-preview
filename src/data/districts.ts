@@ -62,7 +62,7 @@ function generateMockData(lat: number, lng: number, seed: number) {
     const ownHouse: "Yes" | "No" = (i + seed) % 4 === 0 ? "Yes" : "No";
 
     const angle = ((i * 137.5) * Math.PI) / 180;
-    const dist = 0.04 + ((i * 7 + seed) % 18) * 0.009;
+    const dist = 0.02 + ((i * 7 + seed) % 18) * 0.0035;
     const sLat = lat + dist * Math.cos(angle);
     const sLng = lng + dist * Math.sin(angle);
 
@@ -86,7 +86,7 @@ function generateMockData(lat: number, lng: number, seed: number) {
     const pvCount = 8 + ((j * 11 + seed * 7) % 32);
     const pvAssigned = pvCount + 4 + ((j * 5 + seed) % 16);
     const vAngle = ((j * 30 + 15) * Math.PI) / 180;
-    const vDist = 0.05 + ((j * 9 + seed) % 14) * 0.01;
+    const vDist = 0.02 + ((j * 9 + seed) % 14) * 0.004;
 
     volunteers.push({
       id: `V-${seed.toString().padStart(2, "0")}-${(j + 1).toString().padStart(2, "0")}`,
@@ -107,7 +107,7 @@ function generateMockData(lat: number, lng: number, seed: number) {
 const rawDistricts: { name: string; lat: number; lng: number; total: number; male: number }[] = [
   { name: "Ariyalur", lat: 11.1401, lng: 79.0786, total: 840, male: 420 },
   { name: "Chengalpattu", lat: 12.6841, lng: 79.9836, total: 1950, male: 970 },
-  { name: "Chennai", lat: 13.0827, lng: 80.2707, total: 3450, male: 1720 },
+  { name: "Chennai", lat: 13.0550, lng: 80.2250, total: 3450, male: 1720 },
   { name: "Coimbatore", lat: 11.0168, lng: 76.9558, total: 2890, male: 1410 },
   { name: "Cuddalore", lat: 11.7480, lng: 79.7714, total: 1420, male: 730 },
   { name: "Dharmapuri", lat: 12.1211, lng: 78.1582, total: 1180, male: 600 },
