@@ -1,123 +1,200 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&family=DM+Sans:wght@400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
+@theme inline {
+  --font-sans: var(--font-body), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-heading: var(--font-heading), var(--font-body), sans-serif;
+  --font-mono: var(--font-mono), monospace;
+}
+
 :root {
-  --yellow: #FFC20E;
-  --yellow-soft: #FFF1B8;
-  --black: #111111;
-  --white: #FFFFFF;
-  --paper: #F5F5F2;
-  --ink-soft: #555550;
-  --line: #171717;
-  --muted: #777770;
-  --green: #16834A;
-  --green-bg: #DDF5E6;
-  --red: #C83434;
-  --red-bg: #FCE4E1;
-  --blue: #2457C5;
-  --blue-bg: #E5EDFF;
-  --orange: #B85A12;
-  --orange-bg: #FFF0D9;
-  --shadow: 4px 4px 0 #111111;
-  --shadow-sm: 2px 2px 0 #111111;
-  --radius: 14px;
-  --radius-sm: 9px;
-  --border: 2px solid #111111;
-  --font: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --mono: 'DM Mono', monospace;
+  --bg-canvas: #FAF9F6;
+  --bg-card: #FFFFFF;
+  --bg-subtle: #F3F1EA;
+  --black: #000000;
+  --accent-yellow: #FFE600;
+  --accent-gold: #FFC20E;
+  --shadow-brutal: 4px 4px 0px #000000;
+  --shadow-brutal-sm: 2px 2px 0px #000000;
+  --shadow-brutal-hover: 6px 6px 0px #000000;
+  --shadow-brutal-active: 1px 1px 0px #000000;
+  --font: var(--font-body), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: var(--font-mono), monospace;
+
+  /* Pin & Gender Accents */
+  --pin-boy: #2563EB;
+  --pin-boy-tint: #EFF6FF;
+  --pin-girl: #EC4899;
+  --pin-girl-tint: #FDF2F8;
+  --pin-volunteer: #FFE600;
+
+  /* Selection & Hover Glows */
+  --glow-selection: 0 0 0 2px #FFFFFF, 0 0 0 4.5px #000000, 0 0 0 8px #FFE600;
+  --glow-boy-hover: 0 0 0 3px rgba(37, 99, 235, 0.35), 3px 3px 0px #000000;
+  --glow-girl-hover: 0 0 0 3px rgba(236, 72, 153, 0.35), 3px 3px 0px #000000;
+  --glow-vol-hover: 0 0 0 3px rgba(255, 230, 0, 0.7), 3px 3px 0px #000000;
 }
 
 body {
-  background-color: var(--paper);
+  background-color: var(--bg-canvas);
   color: var(--black);
   font-family: var(--font);
   margin: 0;
   padding: 0;
 }
 
-/* NEO-BRUTALIST STUDENT CARD */
-.student-card {
-  background: #FFFFFF;
-  border: 3px solid #111111;
-  border-radius: 3px;
-  padding: 12px;
-  box-shadow: 5px 5px 0px #111111;
-  cursor: pointer;
-  transition: transform 120ms ease, box-shadow 120ms ease;
+h1, h2, h3, .font-heading {
+  font-family: var(--font-heading), var(--font), sans-serif;
 }
 
-.student-card:hover {
-  transform: translate(-3px, -3px);
-  box-shadow: 8px 8px 0px #111111;
-  background: #FFF9DF;
+/* Neo-Brutalist Primitives — wrapped in @layer so Tailwind v4 retains them */
+@layer components {
+  .brutal-card {
+    background: #FFFFFF;
+    border: 2px solid #000000;
+    border-radius: 2px;
+    box-shadow: 4px 4px 0px #000000;
+    transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  }
+
+  .brutal-card-hover:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px #000000;
+    background: #FFFDF2;
+  }
+
+  .brutal-card-hover:active {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0px #000000;
+  }
+
+  .brutal-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border: 2px solid #000000;
+    border-radius: 2px;
+    box-shadow: 2px 2px 0px #000000;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 100ms ease, box-shadow 100ms ease, background-color 100ms ease;
+  }
+
+  .brutal-btn:hover {
+    transform: translate(-1.5px, -1.5px);
+    box-shadow: 4px 4px 0px #000000;
+  }
+
+  .brutal-btn:active {
+    transform: translate(2px, 2px);
+    box-shadow: 0px 0px 0px #000000;
+  }
+
+  .brutal-input {
+    background: #FFFFFF;
+    border: 2px solid #000000;
+    border-radius: 2px;
+    box-shadow: 2px 2px 0px #000000;
+    color: #000000;
+    outline: none;
+    transition: box-shadow 120ms ease, background-color 120ms ease;
+  }
+
+  .brutal-input:focus {
+    background: #FFFDF2;
+    box-shadow: 3px 3px 0px #FFE600;
+  }
+
+  /* Student & Volunteer List Cards */
+  .student-card {
+    background: #FFFFFF;
+    border: 2px solid #000000;
+    border-radius: 2px;
+    padding: 12px;
+    box-shadow: 4px 4px 0px #000000;
+    cursor: pointer;
+    transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  }
+
+  .student-card:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px #000000;
+    background: #FFFDF2;
+  }
+
+  .student-card.high-income {
+    background: #FFE9E5;
+    border-color: #DC2626;
+    box-shadow: 4px 4px 0px #DC2626;
+  }
+
+  .student-card.high-income:hover {
+    background: #FFDCD6;
+    box-shadow: 6px 6px 0px #DC2626;
+  }
+
+  .volunteer-card {
+    background: #FFFFFF;
+    border: 2px solid #000000;
+    border-radius: 2px;
+    padding: 12px;
+    box-shadow: 4px 4px 0px #000000;
+    transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  }
+
+  .volunteer-card:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px #000000;
+    background: #FFFDF2;
+  }
 }
 
-.student-card:active {
-  transform: translate(3px, 3px);
-  box-shadow: 1px 1px 0px #111111;
-}
-
-/* ALERT CARD (WHOLE RED) */
-.student-card.high-income {
-  background: #FFE9E5 !important;
-  border: 3px solid #D92D20 !important;
-  box-shadow: 5px 5px 0px #D92D20 !important;
-}
-
-.student-card.high-income:hover {
-  background: #FFDED8 !important;
-  box-shadow: 8px 8px 0px #D92D20 !important;
-}
-
-/* NAME */
 .student-name {
-  font-family: 'DM Sans', sans-serif;
+  font-family: var(--font-heading), var(--font), sans-serif;
   font-size: 14px;
-  font-weight: 900;
-  letter-spacing: -0.5px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
-  color: #111111;
+  color: #000000;
 }
 
-/* APPLICATION ID */
 .student-id {
-  font-family: 'DM Mono', monospace;
-  font-size: 9px;
+  font-family: var(--mono);
+  font-size: 10px;
   font-weight: 500;
-  color: #444444;
+  color: #555555;
 }
 
-/* BADGES */
 .badge-stream,
 .badge-marks {
-  border: 2px solid #111111;
+  border: 2px solid #000000;
   border-radius: 2px;
-  padding: 3px 7px;
-  font-family: 'DM Mono', monospace;
-  font-size: 9px;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 10px;
   font-weight: 700;
-  color: #111111;
+  color: #000000;
 }
 
 .badge-stream {
-  background: #FFD600;
+  background: #FFE600;
 }
 
 .badge-marks {
   background: #FFFFFF;
-  box-shadow: 2px 2px 0 #111111;
+  box-shadow: 2px 2px 0px #000000;
 }
 
-/* DETAILS FOOTER (Crisp 2-Column Grid) */
+/* Flat anti-fatigue metadata footer inside cards */
 .student-card-footer {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 2px solid #111111;
+  border-top: 1.5px solid #000000;
   display: grid;
   grid-template-columns: 1fr 1fr;
   row-gap: 6px;
   column-gap: 12px;
-  font-family: 'DM Mono', monospace;
+  font-family: var(--mono);
   font-size: 11px;
   font-weight: 500;
 }
@@ -129,66 +206,68 @@ body {
   white-space: nowrap;
 }
 
-/* HIGH INCOME / OWN HOUSE RED LABEL */
 .income-red-tag {
-  background: #D92D20;
+  background: #DC2626;
   color: #FFFFFF;
-  border: 2px solid #111111;
+  border: 1.5px solid #000000;
   border-radius: 2px;
-  padding: 1px 6px;
-  font-weight: 900;
+  padding: 1px 5px;
+  font-weight: 700;
   font-size: 10px;
   display: inline-block;
 }
 
-/* NEO-BRUTALIST VOLUNTEER CARD */
-.volunteer-card {
-  background: #FFFFFF;
-  border: 3px solid #111111;
-  border-radius: 3px;
-  padding: 12px;
-  box-shadow: 5px 5px 0px #111111;
-  cursor: pointer;
-  transition: transform 120ms ease, box-shadow 120ms ease;
+/* Visible keyboard focus ring */
+:focus-visible {
+  outline: 2px solid #000000;
+  outline-offset: 2px;
 }
 
-.volunteer-card:hover {
-  transform: translate(-3px, -3px);
-  box-shadow: 8px 8px 0px #111111;
-  background: #FFF9DF;
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 
-.neo-card {
-  background: var(--white);
-  border: 2px solid var(--black);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+/* Leaflet overrides & Map Pin Hover Glows */
+.neo-pin-boy,
+.neo-pin-girl,
+.neo-pin-vol {
+  transition: transform 140ms ease, box-shadow 140ms ease;
 }
 
-.neo-card:hover {
-  transform: translate(-2px, -2px);
-  box-shadow: 6px 6px 0 var(--black);
+.neo-pin-boy:hover {
+  transform: translate(-1px, -1px) scale(1.08);
+  box-shadow: var(--glow-boy-hover) !important;
 }
 
-.neo-btn {
-  border: 2px solid var(--black);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-sm);
-  font-weight: 800;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
+.neo-pin-girl:hover {
+  transform: translate(-1px, -1px) scale(1.08);
+  box-shadow: var(--glow-girl-hover) !important;
 }
 
-.neo-btn:active {
-  transform: translate(2px, 2px);
-  box-shadow: 0 0 0 var(--black);
+.neo-pin-vol:hover {
+  transform: translate(-1px, -1px) scale(1.08);
+  box-shadow: var(--glow-vol-hover) !important;
 }
 
-.mono {
-  font-family: var(--mono);
+@keyframes panel-focus-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 230, 0, 0.95), 4px 4px 0 #000000;
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 230, 0, 0.45), 6px 6px 0 #000000;
+  }
+  100% {
+    box-shadow: 6px 6px 0 #000000;
+  }
 }
 
-/* Leaflet Distance Tooltip Styling */
+.card-just-focused {
+  animation: panel-focus-flash 650ms ease-out 2;
+}
+
 .leaflet-tooltip.distance-badge {
   background: transparent !important;
   border: none !important;
@@ -200,15 +279,23 @@ body {
   display: none !important;
 }
 
-/* Custom Scrollbars */
+.leaflet-popup-content-wrapper {
+  border: 2px solid #000000 !important;
+  border-radius: 2px !important;
+  box-shadow: 4px 4px 0px #000000 !important;
+}
+
+.leaflet-popup-tip {
+  border: 1.5px solid #000000 !important;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f1ed;
+  background: #FAF9F6;
 }
 ::-webkit-scrollbar-thumb {
-  background: #111111;
-  border-radius: 3px;
+  background: #000000;
 }

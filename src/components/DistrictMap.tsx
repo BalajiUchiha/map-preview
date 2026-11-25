@@ -1,159 +1,151 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import {
   MapContainer,
   TileLayer,
   Marker,
-  Popup,
-  useMap,
   useMapEvents,
   Polyline,
   Tooltip,
   GeoJSON,
 } from "react-leaflet";
 import L from "leaflet";
-import { District, Student, Volunteer } from "@/data/districts";
-import { getDistrictBoundary } from "@/data/districtBoundaries";
+import type { GeoJsonObject } from "geojson";
+import { District, Student, Volunteer, getDistanceKm, getNearbyStudents } from "@/data/districts";
+import { fetchDistrictGeoJson, getDistrictBoundary } from "@/data/districtBoundaries";
 
-// Haversine distance calculator in kilometers
-function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return Math.round(R * c * 10) / 10;
-}
-
-// Green for closer (<= 5km), Red for farther (> 5km)
 function getLineColor(dist: number): string {
   return dist <= 5.0 ? "#16A34A" : "#DC2626";
 }
 
-// Modern, Minimal CSS Student Marker
-// Small, clean blue circular marker with a subtle white border (#2563EB)
-// Alert students (> 1L / Own House) use vibrant alert red (#DC2626)
-const createStudentDotIcon = (
-  opted: string,
-  isHighIncome: boolean,
-  hasOwnHouse: boolean,
+const iconCache = new Map<string, L.DivIcon>();
+
+function getCachedIcon(key: string, create: () => L.DivIcon): L.DivIcon {
+  let icon = iconCache.get(key);
+  if (!icon) {
+    icon = create();
+    iconCache.set(key, icon);
+  }
+  return icon;
+}
+
+type ZoomTier = "compact" | "medium" | "large";
+
+const PROXIMITY_ZOOM_THRESHOLD = 13.0;
+
+function getZoomTier(zoom: number): ZoomTier {
+  if (zoom < 12.25) return "compact";
+  if (zoom < 13.75) return "medium";
+  return "large";
+}
+
+// Lightweight Neo-Brutalist SVG Markers:
+// - Boy Student: #2563EB shirt on #EFF6FF tint
+// - Girl Student: #EC4899 pink shirt on #FDF2F8 tint
+// - Compact tier (< 12.25 zoom): small geometric pins to prevent clutter
+const getStudentMarkerIcon = (
+  gender: "Male" | "Female",
   isSelected: boolean,
+  tier: ZoomTier,
   opacity: number
-) => {
-  const isAlert = isHighIncome || hasOwnHouse;
-  const bg = isAlert ? "#DC2626" : "#2563EB";
-  const size = isSelected ? 15 : 10;
+) =>
+  getCachedIcon(`s-${gender}-${isSelected}-${tier}-${opacity}`, () => {
+    const effectiveTier: ZoomTier = isSelected && tier === "compact" ? "medium" : tier;
+    const isMale = gender === "Male";
+    const accent = isMale ? "#2563EB" : "#EC4899";
+    const cardBg = isMale ? "#EFF6FF" : "#FDF2F8";
+    const hoverClass = isMale ? "neo-pin-boy" : "neo-pin-girl";
 
-  // Selected student: highlighted circle with distinctive dual-ring halo
-  const boxShadow = isSelected
-    ? "0 0 0 2px #FFFFFF, 0 0 0 4.5px #2563EB, 0 2px 6px rgba(0,0,0,0.35)"
-    : "0 0 0 1.5px #FFFFFF, 0 0 0 2px rgba(17,24,39,0.35), 0 1px 3px rgba(0,0,0,0.25)";
+    if (effectiveTier === "compact") {
+      const size = isSelected ? 15 : 11;
+      const boxShadow = isSelected
+        ? "0 0 0 2px #FFFFFF, 0 0 0 4px #000000, 0 0 0 6px #FFE600"
+        : "0 0 0 1px #FFFFFF, 1.5px 1.5px 0 #000000";
+      return L.divIcon({
+        className: "neo-student-marker",
+        html: `<div class="${hoverClass}" style="width:${size}px;height:${size}px;background:${accent};border:2px solid #000000;border-radius:50%;box-shadow:${boxShadow};opacity:${opacity};cursor:pointer;"></div>`,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      });
+    }
 
-  return L.divIcon({
-    className: "modern-student-marker",
-    html: `
-      <div style="
-        width: ${size}px;
-        height: ${size}px;
-        background: ${bg};
-        border-radius: 50%;
-        box-shadow: ${boxShadow};
-        opacity: ${opacity};
-        transform: translate(-50%, -50%);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
-        cursor: pointer;
-      "></div>
-    `,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
-  });
-};
+    const size = effectiveTier === "large" ? (isSelected ? 34 : 30) : isSelected ? 26 : 22;
+    const boxShadow = isSelected
+      ? "0 0 0 2px #FFFFFF, 0 0 0 4.5px #000000, 0 0 0 8px #FFE600"
+      : "2px 2px 0 #000000";
 
-// Modern, Minimal CSS Volunteer Marker
-// Green circular ring with dark outer border (#16A34A ring + #111 border)
-const createVolunteerDotIcon = (isSelected: boolean, opacity: number) => {
-  const size = isSelected ? 17 : 13;
+    const personSvg = isMale
+      ? `<svg viewBox="0 0 24 24" width="${size - 6}" height="${size - 6}" aria-hidden="true">
+          <path d="M7.5 8.5c0-3 2-5 4.5-5s4.5 2 4.5 5v1H7.5z" fill="#111827"/>
+          <circle cx="12" cy="10" r="3.6" fill="#FDE68A" stroke="#000000" stroke-width="1.6"/>
+          <path d="M5.5 21c.6-3.8 3.1-5.8 6.5-5.8s5.9 2 6.5 5.8z" fill="${accent}" stroke="#000000" stroke-width="1.6" stroke-linejoin="round"/>
+        </svg>`
+      : `<svg viewBox="0 0 24 24" width="${size - 6}" height="${size - 6}" aria-hidden="true">
+          <path d="M6.5 13.5c-.5-5 1.5-9.5 5.5-9.5s6 4.5 5.5 9.5l-1.5 1H8z" fill="#111827"/>
+          <circle cx="12" cy="10" r="3.5" fill="#FDE68A" stroke="#000000" stroke-width="1.6"/>
+          <path d="M5.5 21c.6-3.8 3.1-5.8 6.5-5.8s5.9 2 6.5 5.8z" fill="${accent}" stroke="#000000" stroke-width="1.6" stroke-linejoin="round"/>
+        </svg>`;
 
-  // Selected volunteer: distinctive outer halo/ring making selection unmistakable
-  const boxShadow = isSelected
-    ? "0 0 0 2.5px #FFFFFF, 0 0 0 5px #16A34A, 0 2px 8px rgba(0,0,0,0.4)"
-    : "0 0 0 1px #111111, 0 1px 3px rgba(0,0,0,0.3)";
-
-  return L.divIcon({
-    className: "modern-volunteer-marker",
-    html: `
-      <div style="
-        width: ${size}px;
-        height: ${size}px;
-        background: #FFFFFF;
-        border: ${isSelected ? "3.5px" : "2.5px"} solid #16A34A;
-        border-radius: 50%;
-        box-shadow: ${boxShadow};
-        opacity: ${opacity};
-        transform: translate(-50%, -50%);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      ">
-        <div style="
-          width: ${isSelected ? 4 : 3}px;
-          height: ${isSelected ? 4 : 3}px;
-          background: #111111;
-          border-radius: 50%;
-        "></div>
-      </div>
-    `,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
-  });
-};
-
-const createHqIcon = (opacity: number) =>
-  L.divIcon({
-    className: "hq-dot",
-    html: `
-      <div style="
-        background: #FFC20E;
-        border: 2px solid #111;
-        border-radius: 50%;
-        width: 22px;
-        height: 22px;
-        display: grid;
-        place-items: center;
-        font-size: 11px;
-        box-shadow: 2px 2px 0 #111;
-        opacity: ${opacity};
-        transform: translate(-50%, -50%);
-        transition: opacity 0.25s ease;
-        cursor: pointer;
-      ">🏛️</div>
-    `,
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
+    return L.divIcon({
+      className: "neo-student-marker",
+      html: `<div class="${hoverClass}" style="width:${size}px;height:${size}px;background:${cardBg};border:2px solid #000000;border-radius:3px;box-shadow:${boxShadow};opacity:${opacity};display:flex;align-items:center;justify-content:center;cursor:pointer;">${personSvg}</div>`,
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+    });
   });
 
-// Map Controller for Zoom tracking, map clicks and auto-focus
+// Volunteer 'V' Circle Marker: Yellow (#FFE600) pin + Black (#000000) 'V'
+const getVolunteerMarkerIcon = (isSelected: boolean, tier: ZoomTier, opacity: number) =>
+  getCachedIcon(`v-${isSelected}-${tier}-${opacity}`, () => {
+    const effectiveTier: ZoomTier = isSelected && tier === "compact" ? "medium" : tier;
+
+    if (effectiveTier === "compact") {
+      const size = isSelected ? 17 : 13;
+      const boxShadow = isSelected
+        ? "0 0 0 2px #FFFFFF, 0 0 0 4px #000000, 0 0 0 6px #FFE600"
+        : "1.5px 1.5px 0 #000000";
+      return L.divIcon({
+        className: "neo-volunteer-marker",
+        html: `<div class="neo-pin-vol" style="width:${size}px;height:${size}px;background:#FFE600;border:2px solid #000000;border-radius:50%;box-shadow:${boxShadow};opacity:${opacity};display:flex;align-items:center;justify-content:center;cursor:pointer;font-family:var(--mono);font-size:8px;font-weight:900;color:#000000;line-height:1;">V</div>`,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      });
+    }
+
+    const size = effectiveTier === "large" ? (isSelected ? 34 : 30) : isSelected ? 26 : 22;
+    const fontSize = effectiveTier === "large" ? 15 : 12;
+    const boxShadow = isSelected
+      ? "0 0 0 2px #FFFFFF, 0 0 0 4.5px #000000, 0 0 0 8px #FFE600"
+      : "2px 2px 0 #000000";
+
+    return L.divIcon({
+      className: "neo-volunteer-marker",
+      html: `<div class="neo-pin-vol" style="width:${size}px;height:${size}px;background:#FFE600;border:2px solid #000000;border-radius:50%;box-shadow:${boxShadow};opacity:${opacity};display:flex;align-items:center;justify-content:center;cursor:pointer;font-family:var(--mono);font-size:${fontSize}px;font-weight:900;color:#000000;line-height:1;">V</div>`,
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+    });
+  });
+
 function MapInteractionController({
   district,
+  students,
+  volunteers,
   selectedStudent,
   selectedVolunteer,
   recenterTrigger,
+  fitPolygonTrigger,
   onZoomChange,
   onClearFocus,
 }: {
   district: District;
+  students: Student[];
+  volunteers: Volunteer[];
   selectedStudent: Student | null;
   selectedVolunteer: Volunteer | null;
   recenterTrigger: number;
+  fitPolygonTrigger: number;
   onZoomChange: (z: number) => void;
   onClearFocus: () => void;
 }) {
@@ -168,87 +160,110 @@ function MapInteractionController({
 
   const boundary = useMemo(() => getDistrictBoundary(district.name), [district.name]);
 
-  // Tight urban bounds centered on the district populated area so it is never "far zoomed away"
-  const { urbanBounds, maxBounds } = useMemo(() => {
-    // 0.07 deg lat/lng span (~15km) closely wraps the populated city area with markers
-    const tightSpan = 0.07;
-    const uSw = L.latLng(district.lat - tightSpan, district.lng - tightSpan);
-    const uNe = L.latLng(district.lat + tightSpan, district.lng + tightSpan);
-    const uBounds = L.latLngBounds(uSw, uNe);
+  const { clusterBounds, polygonBounds, maxBounds } = useMemo(() => {
+    const pts: L.LatLngExpression[] = [[district.lat, district.lng]];
+    for (const s of students) pts.push([s.lat, s.lng]);
+    for (const v of volunteers) pts.push([v.lat, v.lng]);
+    const cBounds = L.latLngBounds(pts).pad(0.08);
 
     if (boundary) {
-      const mSw = L.latLng(boundary.maxBounds[0][0], boundary.maxBounds[0][1]);
-      const mNe = L.latLng(boundary.maxBounds[1][0], boundary.maxBounds[1][1]);
       return {
-        urbanBounds: uBounds,
-        maxBounds: L.latLngBounds(mSw, mNe),
+        clusterBounds: cBounds,
+        polygonBounds: L.latLngBounds(boundary.urbanBounds[0], boundary.urbanBounds[1]),
+        maxBounds: L.latLngBounds(boundary.maxBounds[0], boundary.maxBounds[1]),
       };
     }
-    const mSw = L.latLng(district.lat - 0.25, district.lng - 0.25);
-    const mNe = L.latLng(district.lat + 0.25, district.lng + 0.25);
-    return { urbanBounds: uBounds, maxBounds: L.latLngBounds(mSw, mNe) };
-  }, [boundary, district]);
 
-  // Handle window/container dynamic resize (split-screen drag, mobile orientation)
-  useEffect(() => {
-    const handleResize = () => {
-      map.invalidateSize();
+    return {
+      clusterBounds: cBounds,
+      polygonBounds: L.latLngBounds(
+        [district.lat - 0.08, district.lng - 0.08],
+        [district.lat + 0.08, district.lng + 0.08]
+      ),
+      maxBounds: L.latLngBounds(
+        [district.lat - 0.25, district.lng - 0.25],
+        [district.lat + 0.25, district.lng + 0.25]
+      ),
     };
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+  }, [boundary, district, students, volunteers]);
+
+  // Keep Leaflet sized during window resize and split-pane dragging
+  useEffect(() => {
+    const container = map.getContainer();
+    const observer = new ResizeObserver(() => map.invalidateSize());
+    observer.observe(container);
+    return () => observer.disconnect();
   }, [map]);
 
-  // Initial district lock & urban-focused boundaries
+  // Lock panning to district polygon + 5km buffer, and frame populated cluster tightly (fixes Ariyalur zoom)
   useEffect(() => {
     map.invalidateSize();
     map.setMaxBounds(maxBounds);
-    map.options.maxBoundsViscosity = 1.0;
 
-    // Calculate optimal zoom tailored to container dimensions
-    const fitZoom = map.getBoundsZoom(urbanBounds, false, L.point(16, 16));
-    map.setMinZoom(Math.max(10, fitZoom - 0.8));
+    const polyZoom = map.getBoundsZoom(polygonBounds, false, L.point(16, 16));
+    map.setMinZoom(Math.max(8, polyZoom - 0.5));
 
-    map.fitBounds(urbanBounds, {
-      padding: [16, 16],
+    map.fitBounds(clusterBounds, {
+      padding: [36, 36],
       maxZoom: 13.5,
       animate: false,
     });
     onZoomChange(map.getZoom());
-  }, [district, urbanBounds, maxBounds, map, onZoomChange]);
+  }, [district, clusterBounds, polygonBounds, maxBounds, map, onZoomChange]);
+
+  const prevHadSelectionRef = useRef(false);
+  const prevRecenterRef = useRef(recenterTrigger);
+  const prevPolygonTriggerRef = useRef(fitPolygonTrigger);
 
   // Dynamic zoom & focus controller
   useEffect(() => {
-    // 1. Both Volunteer AND Student selected: smoothly fit BOTH in view
+    const hasSelection = Boolean(selectedVolunteer || selectedStudent);
+    const shouldRecenterCluster = recenterTrigger !== prevRecenterRef.current;
+    const shouldFitPolygon = fitPolygonTrigger !== prevPolygonTriggerRef.current;
+    prevRecenterRef.current = recenterTrigger;
+    prevPolygonTriggerRef.current = fitPolygonTrigger;
+
+    if (shouldFitPolygon) {
+      prevHadSelectionRef.current = false;
+      map.flyToBounds(polygonBounds, { duration: 0.6, padding: [20, 20], maxZoom: 13 });
+      return;
+    }
+
     if (selectedVolunteer && selectedStudent) {
+      prevHadSelectionRef.current = true;
       const pairBounds = L.latLngBounds(
         [selectedVolunteer.lat, selectedVolunteer.lng],
         [selectedStudent.lat, selectedStudent.lng]
       );
-      map.flyToBounds(pairBounds, {
-        padding: [65, 65],
-        maxZoom: 15,
-        duration: 0.6,
-      });
+      map.flyToBounds(pairBounds, { padding: [65, 65], maxZoom: 15, duration: 0.6 });
       return;
     }
 
-    // 2. Only Volunteer selected: zoom into volunteer location at close scale
     if (selectedVolunteer) {
+      prevHadSelectionRef.current = true;
       map.flyTo([selectedVolunteer.lat, selectedVolunteer.lng], 14.5, { duration: 0.6 });
       return;
     }
 
-    // 3. Only Student selected: zoom into student location at close scale
     if (selectedStudent) {
+      prevHadSelectionRef.current = true;
       map.flyTo([selectedStudent.lat, selectedStudent.lng], 14.5, { duration: 0.6 });
       return;
     }
 
-    // 4. Centerise view back to district urban bounds
-    if (recenterTrigger > 0 || (!selectedStudent && !selectedVolunteer)) {
-      map.flyToBounds(urbanBounds, { duration: 0.6, padding: [16, 16], maxZoom: 13.5 });
+    if (shouldRecenterCluster || (!hasSelection && prevHadSelectionRef.current)) {
+      map.flyToBounds(clusterBounds, { duration: 0.6, padding: [36, 36], maxZoom: 13.5 });
     }
-  }, [selectedVolunteer, selectedStudent, recenterTrigger, urbanBounds, map]);
+    prevHadSelectionRef.current = false;
+  }, [
+    selectedVolunteer,
+    selectedStudent,
+    recenterTrigger,
+    fitPolygonTrigger,
+    clusterBounds,
+    polygonBounds,
+    map,
+  ]);
 
   return null;
 }
@@ -273,10 +288,29 @@ export default function DistrictMap({
   onSelectVolunteer,
 }: DistrictMapProps) {
   const [recenterCount, setRecenterCount] = useState(0);
+  const [fitPolygonCount, setFitPolygonCount] = useState(0);
   const [isDimmed, setIsDimmed] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
   const [showDefaultLines, setShowDefaultLines] = useState(true);
   const [currentZoom, setCurrentZoom] = useState(13);
+  const [loadedBoundary, setLoadedBoundary] = useState<{
+    name: string;
+    data: GeoJsonObject | null;
+  } | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchDistrictGeoJson(district.name, controller.signal)
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setLoadedBoundary({ name: district.name, data });
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [district.name]);
+
+  const districtGeoJson = loadedBoundary?.name === district.name ? loadedBoundary.data : null;
 
   const selectedStudent = useMemo(
     () => students.find((s) => s.id === selectedStudentId) || null,
@@ -290,30 +324,16 @@ export default function DistrictMap({
 
   const districtBoundary = useMemo(() => getDistrictBoundary(district.name), [district.name]);
 
-  // Administrative max bounds with 5km buffer
   const initialMaxBounds = useMemo(() => {
     if (districtBoundary) {
-      const sw = L.latLng(districtBoundary.maxBounds[0][0], districtBoundary.maxBounds[0][1]);
-      const ne = L.latLng(districtBoundary.maxBounds[1][0], districtBoundary.maxBounds[1][1]);
-      return L.latLngBounds(sw, ne);
+      return L.latLngBounds(districtBoundary.maxBounds[0], districtBoundary.maxBounds[1]);
     }
-    const sw = L.latLng(district.lat - 0.25, district.lng - 0.25);
-    const ne = L.latLng(district.lat + 0.25, district.lng + 0.25);
-    return L.latLngBounds(sw, ne);
+    return L.latLngBounds(
+      [district.lat - 0.25, district.lng - 0.25],
+      [district.lat + 0.25, district.lng + 0.25]
+    );
   }, [district, districtBoundary]);
 
-  // Students sorted by proximity to selected volunteer
-  const studentsWithDistance = useMemo(() => {
-    if (!selectedVolunteer) return [];
-    return students
-      .map((s) => ({
-        student: s,
-        dist: getDistanceKm(selectedVolunteer.lat, selectedVolunteer.lng, s.lat, s.lng),
-      }))
-      .sort((a, b) => a.dist - b.dist);
-  }, [students, selectedVolunteer]);
-
-  // Distance between selected volunteer and selected student (if both active)
   const pairDistanceKm = useMemo(() => {
     if (!selectedVolunteer || !selectedStudent) return null;
     return getDistanceKm(
@@ -324,10 +344,8 @@ export default function DistrictMap({
     );
   }, [selectedVolunteer, selectedStudent]);
 
-  // STRICT Volunteer-to-Student Connection Lines
-  // Connects volunteer to ONLY nearby students (<= 5km) or single direct pair line when a student is selected
+  // Strict Volunteer-to-Student connection lines
   const activeConnections = useMemo(() => {
-    // CASE 1: Both Volunteer AND Student selected -> Show ONLY the single direct line between them!
     if (selectedVolunteer && selectedStudent) {
       const dist = getDistanceKm(
         selectedVolunteer.lat,
@@ -338,8 +356,6 @@ export default function DistrictMap({
       return [
         {
           id: `pair-${selectedVolunteer.id}-${selectedStudent.id}`,
-          volunteerId: selectedVolunteer.id,
-          studentId: selectedStudent.id,
           from: [selectedVolunteer.lat, selectedVolunteer.lng] as [number, number],
           to: [selectedStudent.lat, selectedStudent.lng] as [number, number],
           dist,
@@ -350,25 +366,14 @@ export default function DistrictMap({
       ];
     }
 
-    // CASE 2: Only Volunteer selected -> Show ONLY closest nearby students within 5 km (max 3)
     if (selectedVolunteer) {
-      const nearby = students
-        .map((s) => ({
-          student: s,
-          dist: getDistanceKm(selectedVolunteer.lat, selectedVolunteer.lng, s.lat, s.lng),
-        }))
-        .filter((item) => item.dist <= 5.0)
-        .sort((a, b) => a.dist - b.dist)
-        .slice(0, 3);
-
-      return nearby.map((item) => ({
+      const { withinRadius } = getNearbyStudents(selectedVolunteer, students);
+      return withinRadius.slice(0, 3).map((item) => ({
         id: `focus-${selectedVolunteer.id}-${item.student.id}`,
-        volunteerId: selectedVolunteer.id,
-        studentId: item.student.id,
         from: [selectedVolunteer.lat, selectedVolunteer.lng] as [number, number],
         to: [item.student.lat, item.student.lng] as [number, number],
         dist: item.dist,
-        color: "#16834A",
+        color: "#16A34A",
         isFocus: true,
         isSelectedPair: false,
       }));
@@ -376,11 +381,8 @@ export default function DistrictMap({
 
     if (!showDefaultLines) return [];
 
-    // CASE 3: No volunteer selected -> show 1 closest line per volunteer (<= 5km)
     const lines: {
       id: string;
-      volunteerId: string;
-      studentId: string;
       from: [number, number];
       to: [number, number];
       dist: number;
@@ -391,7 +393,7 @@ export default function DistrictMap({
 
     volunteers.forEach((v) => {
       let closestStudent = students[0];
-      let minDist = 9999;
+      let minDist = Infinity;
       students.forEach((s) => {
         const d = getDistanceKm(v.lat, v.lng, s.lat, s.lng);
         if (d < minDist) {
@@ -403,12 +405,10 @@ export default function DistrictMap({
       if (closestStudent && minDist <= 5.0) {
         lines.push({
           id: `def-${v.id}-${closestStudent.id}`,
-          volunteerId: v.id,
-          studentId: closestStudent.id,
           from: [v.lat, v.lng],
           to: [closestStudent.lat, closestStudent.lng],
           dist: minDist,
-          color: "#16834A",
+          color: "#16A34A",
           isFocus: false,
           isSelectedPair: false,
         });
@@ -419,192 +419,233 @@ export default function DistrictMap({
   }, [volunteers, students, selectedVolunteer, selectedStudent, showDefaultLines]);
 
   const markerOpacity = isDimmed ? 0.15 : 1.0;
+  const zoomTier = getZoomTier(currentZoom);
+  const showProximityLines =
+    currentZoom >= PROXIMITY_ZOOM_THRESHOLD || Boolean(selectedVolunteer && selectedStudent);
 
   return (
-    <div className="relative h-full w-full bg-[#f4f4f0] overflow-hidden select-none">
-      {/* MODERN MINIMAL LEGEND BOX */}
-      <div className="absolute top-3.5 right-3.5 z-[1000] bg-white/95 backdrop-blur-md border-[2px] border-black rounded-[8px] shadow-[3px_3px_0_#111] px-3.5 py-1.5 flex items-center gap-3 font-mono text-xs">
-        <span className="font-black text-sm uppercase tracking-wider text-black">{district.name}</span>
-        <div className="h-4 w-[2px] bg-black/20"></div>
-        <div className="flex items-center gap-3 text-xs font-bold">
-          <div className="flex items-center gap-1.5" title="Student applicant">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#2563EB] shadow-[0_0_0_1.5px_#fff,0_0_0_2px_#111]"></span>
-            <span>Students</span>
+    <div className="relative h-full w-full bg-[#FAF9F6] overflow-hidden select-none">
+      {/* NEO-BRUTALIST LEGEND BOX (Top-right, compact on narrow splits) */}
+      <div className="absolute top-3.5 right-3.5 z-[1000] bg-white border-2 border-black rounded-[2px] shadow-[3px_3px_0_#000] px-2.5 sm:px-3.5 py-1.5 flex items-center gap-2 sm:gap-3 font-mono text-xs max-w-[calc(100%-64px)]">
+        <span className="font-heading font-bold text-xs sm:text-sm uppercase tracking-wider text-black truncate">
+          {district.name}
+        </span>
+        <div className="h-4 w-[1.5px] bg-black shrink-0" />
+        <div className="flex items-center gap-2 sm:gap-3 text-[11px] font-bold shrink-0">
+          <div className="flex items-center gap-1" title="Boy Applicant">
+            <span className="w-3 h-3 rounded-[2px] bg-[#2563EB] border-[1.5px] border-black shadow-[1px_1px_0_#000]" />
+            <span className="hidden sm:inline">Boy</span>
           </div>
-          <div className="flex items-center gap-1.5" title="Volunteer verifier (green ring)">
-            <span className="w-3 h-3 rounded-full bg-white border-[2.5px] border-[#16A34A] shadow-[0_0_0_1px_#111] flex items-center justify-center">
-              <span className="w-1 h-1 rounded-full bg-[#111]"></span>
+          <div className="flex items-center gap-1" title="Girl Applicant">
+            <span className="w-3 h-3 rounded-[2px] bg-[#EC4899] border-[1.5px] border-black shadow-[1px_1px_0_#000]" />
+            <span className="hidden sm:inline">Girl</span>
+          </div>
+          <div className="flex items-center gap-1" title="Volunteer">
+            <span className="w-4 h-4 rounded-full bg-[#FFE600] border-[1.5px] border-black shadow-[1px_1px_0_#000] flex items-center justify-center font-mono text-[9px] font-black text-black leading-none">
+              V
             </span>
-            <span>Volunteers</span>
-          </div>
-          <div className="flex items-center gap-1.5" title="Priority status: Income > 1L or Own House">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#DC2626] shadow-[0_0_0_1.5px_#fff,0_0_0_2px_#111]"></span>
-            <span>Alert</span>
+            <span className="hidden sm:inline">Volunteer</span>
           </div>
         </div>
       </div>
 
-      {/* ACTIVE SELECTION BANNER (Shown when only volunteer is focused) */}
-      {selectedVolunteer && !selectedStudent && (
-        <div className="absolute top-3.5 left-12 z-[1000] bg-white border-2 border-black rounded-[6px] shadow-[3px_3px_0_#111] px-3 py-1.5 text-xs font-mono font-bold flex items-center gap-2.5">
-          <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-sm bg-black border border-[#FFC20E] shrink-0" />
-            <span>🤝 Focused: {selectedVolunteer.name}</span>
-            <span className="text-[10px] text-gray-500 font-normal">({selectedVolunteer.college})</span>
-          </span>
-          <button
-            onClick={() => {
-              onSelectVolunteer(null);
-              setRecenterCount((c) => c + 1);
-            }}
-            className="px-2 py-0.5 bg-black text-[#FFC20E] rounded text-[10px] cursor-pointer hover:bg-gray-800 transition-colors"
-          >
-            Clear ✕
-          </button>
-        </div>
-      )}
-
-      {/* FLOATING STUDENT APPLICATION FORM DETAILS WINDOW (When a student is clicked) */}
+      {/* NON-OVERLAPPING FLOATING STUDENT INSPECTOR CARD (Bottom-left) */}
       {selectedStudent && (
         <div
-          className={`absolute top-3.5 left-12 z-[1001] w-[295px] max-w-[88vw] rounded-[4px] p-3 text-xs animate-in fade-in zoom-in-95 duration-150 ${
+          className={`absolute bottom-4 left-3.5 z-[1001] w-[295px] max-w-[calc(100%-82px)] rounded-[2px] p-3 text-xs select-text ${
             selectedStudent.familyIncome > 100000 || selectedStudent.ownHouse === "Yes"
-              ? "bg-[#FFE9E5] border-[3px] border-[#D92D20] shadow-[5px_5px_0px_#D92D20]"
-              : "bg-white border-[3px] border-[#111111] shadow-[5px_5px_0px_#111111]"
+              ? "bg-[#FFE9E5] border-2 border-[#DC2626] shadow-[5px_5px_0px_#DC2626]"
+              : "bg-white border-2 border-black shadow-[5px_5px_0px_#000]"
           }`}
         >
-          {/* Header */}
-          <div className="flex justify-between items-start gap-1 pb-2 border-b-2 border-black/15">
-            <div>
-              <div className="font-sans font-black text-sm uppercase text-[#111] tracking-tight">
+          <div className="flex justify-between items-start gap-2 pb-2 border-b-[1.5px] border-black">
+            <div className="min-w-0">
+              <div className="font-heading font-bold text-sm uppercase text-black tracking-tight truncate">
                 {selectedStudent.name}
               </div>
-              <div className="font-mono text-[9px] text-[#555] font-semibold">
+              <div className="font-mono text-[10px] text-black/60 font-medium">
                 ID: {selectedStudent.id}
               </div>
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
               <span className="badge-stream">{selectedStudent.opted}</span>
-              <span className="badge-marks">{selectedStudent.marks}/600</span>
+              <span className="badge-marks tabular-nums">{selectedStudent.marks}/600</span>
               <button
+                type="button"
                 onClick={() => onSelectStudent(null)}
-                className="w-5 h-5 bg-black text-white hover:text-[#FFC20E] rounded-full flex items-center justify-center font-bold text-[10px] cursor-pointer"
-                title="Close student form (volunteer stays active)"
+                className="w-5 h-5 bg-black text-[#FFE600] hover:bg-neutral-800 rounded-[2px] flex items-center justify-center font-bold text-[10px] cursor-pointer"
+                title="Close student details (volunteer stays selected)"
+                aria-label="Close student details"
               >
                 ✕
               </button>
             </div>
           </div>
 
-          {/* Distance Bar if connected to active volunteer */}
           {selectedVolunteer && pairDistanceKm !== null && (
-            <div className="mt-2 p-1.5 bg-[#111] text-[#FFC20E] rounded font-mono text-[10px] flex items-center justify-between border border-black shadow-[1px_1px_0_#FFC20E]">
-              <span className="truncate">🤝 Vol. {selectedVolunteer.name}</span>
+            <div className="mt-2 px-2 py-1.5 bg-black text-[#FFE600] rounded-[2px] font-mono text-[10px] flex items-center justify-between gap-2">
+              <span className="truncate font-bold">
+                {selectedVolunteer.name.startsWith("Vol.") ? selectedVolunteer.name : `Vol. ${selectedVolunteer.name}`}
+              </span>
               <span
-                className={`px-1.5 py-0.5 rounded font-black text-[9px] ${
-                  pairDistanceKm <= 5.0 ? "bg-[#16834A] text-white" : "bg-[#D92D20] text-white"
+                className={`px-1.5 py-0.5 rounded-[2px] font-bold text-[10px] tabular-nums shrink-0 border border-black ${
+                  pairDistanceKm <= 5.0 ? "bg-[#4ADE80] text-black" : "bg-[#DC2626] text-white"
                 }`}
               >
-                ⚡ {pairDistanceKm} km
+                {pairDistanceKm} km
               </span>
             </div>
           )}
 
-          {/* Form Details 2x2 Grid */}
-          <div className="mt-2.5 font-mono text-[11px] grid grid-cols-2 gap-2 bg-white/70 p-2 border border-black/20 rounded">
-            <div>
-              <span className="text-[#666] text-[9px] uppercase block">Gender</span>
-              <b className="text-[#111]">{selectedStudent.gender}</b>
+          {/* Flat 1.5px grid inside card */}
+          <div className="mt-2.5 font-mono text-[11px] grid grid-cols-2 border-[1.5px] border-black bg-white divide-x-[1.5px] divide-y-[1.5px] divide-black">
+            <div className="p-1.5">
+              <span className="text-black/60 text-[9px] uppercase block">Gender</span>
+              <b className="text-black">{selectedStudent.gender}</b>
             </div>
-            <div>
-              <span className="text-[#666] text-[9px] uppercase block">Parents</span>
-              <b className="text-[#111]">{selectedStudent.parents}</b>
+            <div className="p-1.5">
+              <span className="text-black/60 text-[9px] uppercase block">Parents</span>
+              <b className="text-black">{selectedStudent.parents}</b>
             </div>
-            <div>
-              <span className="text-[#666] text-[9px] uppercase block">Own House</span>
-              <b className={selectedStudent.ownHouse === "Yes" ? "text-[#D92D20]" : "text-green-700"}>
+            <div className="p-1.5">
+              <span className="text-black/60 text-[9px] uppercase block">Own House</span>
+              <b className={selectedStudent.ownHouse === "Yes" ? "text-[#DC2626]" : "text-[#14532D]"}>
                 {selectedStudent.ownHouse}
               </b>
             </div>
-            <div>
-              <span className="text-[#666] text-[9px] uppercase block">Family Income</span>
+            <div className="p-1.5">
+              <span className="text-black/60 text-[9px] uppercase block">Income</span>
               {selectedStudent.familyIncome > 100000 || selectedStudent.ownHouse === "Yes" ? (
-                <span className="income-red-tag text-[9px]">
+                <span className="income-red-tag tabular-nums">
                   ₹{selectedStudent.familyIncome.toLocaleString()}
                 </span>
               ) : (
-                <b className="text-green-700">₹{selectedStudent.familyIncome.toLocaleString()}</b>
+                <b className="text-[#14532D] tabular-nums">
+                  ₹{selectedStudent.familyIncome.toLocaleString()}
+                </b>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* BOTTOM-RIGHT FAB: SINGLE CIRCLE REVEALING THREE STACKED CIRCLES */}
-      <div className="absolute bottom-5 right-4 z-[1000] flex flex-col-reverse items-center gap-2.5">
+      {/* BOTTOM-RIGHT MAP TOOLBAR (Monochrome SVGs, no emojis) */}
+      <div className="absolute bottom-5 right-4 z-[1000] flex flex-col-reverse items-center gap-2">
         <button
+          type="button"
           onClick={() => setFabOpen((prev) => !prev)}
-          className={`w-12 h-12 rounded-full border-[2.5px] border-black shadow-[3px_3px_0_#111] flex items-center justify-center font-bold text-lg transition-transform cursor-pointer relative group ${
-            fabOpen ? "bg-black text-[#FFC20E] rotate-45" : "bg-[#FFC20E] text-black hover:scale-105"
+          className={`w-11 h-11 rounded-[2px] border-2 border-black shadow-[3px_3px_0_#000] flex items-center justify-center transition-transform cursor-pointer relative group ${
+            fabOpen ? "bg-black text-[#FFE600]" : "bg-[#FFE600] text-black hover:-translate-x-0.5 hover:-translate-y-0.5"
           }`}
           aria-label="Map Tools Menu"
         >
-          <span>{fabOpen ? "＋" : "⚙️"}</span>
-
-          <span className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute right-16 bg-black text-[#FFC20E] text-xs font-mono font-bold px-2.5 py-1 rounded border border-[#FFC20E] shadow-[2px_2px_0_#111] whitespace-nowrap">
+          {fabOpen ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3">
+              <line x1="4" y1="21" x2="4" y2="14" />
+              <line x1="4" y1="10" x2="4" y2="3" />
+              <line x1="12" y1="21" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12" y2="3" />
+              <line x1="20" y1="21" x2="20" y2="16" />
+              <line x1="20" y1="12" x2="20" y2="3" />
+              <line x1="1" y1="14" x2="7" y2="14" />
+              <line x1="9" y1="8" x2="15" y2="8" />
+              <line x1="17" y1="16" x2="23" y2="16" />
+            </svg>
+          )}
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute right-14 bg-black text-[#FFE600] text-[11px] font-mono font-bold px-2.5 py-1 rounded-[2px] border border-black whitespace-nowrap">
             {fabOpen ? "Close Tools" : "Map Controls"}
           </span>
         </button>
 
         {fabOpen && (
-          <div className="flex flex-col items-center gap-2.5 animate-in fade-in slide-in-from-bottom-2 duration-150">
+          <div className="flex flex-col items-center gap-2">
+            {/* Focus active cluster (tight zoom) */}
             <div className="relative group">
               <button
+                type="button"
                 onClick={() => {
                   onSelectStudent(null);
                   onSelectVolunteer(null);
                   setRecenterCount((c) => c + 1);
                 }}
-                className="w-11 h-11 rounded-full bg-white hover:bg-[#FFC20E] text-black border-2 border-black shadow-[2px_2px_0_#111] flex items-center justify-center text-base cursor-pointer hover:scale-105 transition-all"
-                aria-label="Centerise view"
+                className="w-10 h-10 rounded-[2px] bg-white hover:bg-[#FFE600] text-black border-2 border-black shadow-[2px_2px_0_#000] flex items-center justify-center cursor-pointer transition-colors"
+                aria-label="Zoom to active cluster"
               >
-                🎯
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3">
+                  <circle cx="12" cy="12" r="7" />
+                  <circle cx="12" cy="12" r="2" />
+                  <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+                </svg>
               </button>
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute right-14 top-2 bg-black text-[#FFC20E] text-[11px] font-mono font-bold px-2 py-1 rounded border border-[#FFC20E] shadow-[2px_2px_0_#111] whitespace-nowrap">
-                Centerise View
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute right-12 top-1.5 bg-black text-[#FFE600] text-[10px] font-mono font-bold px-2 py-1 rounded-[2px] whitespace-nowrap">
+                Focus Active Cluster
               </span>
             </div>
 
+            {/* Fit full district boundary polygon */}
             <div className="relative group">
               <button
-                onClick={() => setIsDimmed((prev) => !prev)}
-                className={`w-11 h-11 rounded-full border-2 border-black shadow-[2px_2px_0_#111] flex items-center justify-center text-base cursor-pointer hover:scale-105 transition-all ${
-                  isDimmed ? "bg-[#D92D20] text-white" : "bg-white hover:bg-black hover:text-[#FFC20E] text-black"
-                }`}
-                aria-label="Toggle transparency"
-              >
-                {isDimmed ? "🕶️" : "👁️"}
-              </button>
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute right-14 top-2 bg-black text-[#FFC20E] text-[11px] font-mono font-bold px-2 py-1 rounded border border-[#FFC20E] shadow-[2px_2px_0_#111] whitespace-nowrap">
-                {isDimmed ? "Restore Pins (100% Opacity)" : "Dim Pins (Hide / Ghost View)"}
-              </span>
-            </div>
-
-            <div className="relative group">
-              <button
+                type="button"
                 onClick={() => {
-                  setShowDefaultLines((prev) => !prev);
+                  onSelectStudent(null);
+                  onSelectVolunteer(null);
+                  setFitPolygonCount((c) => c + 1);
                 }}
-                className={`w-11 h-11 rounded-full border-2 border-black shadow-[2px_2px_0_#111] flex items-center justify-center text-base cursor-pointer hover:scale-105 transition-all ${
-                  showDefaultLines ? "bg-[#DDF5E6] text-[#16834A]" : "bg-white text-black hover:bg-gray-100"
+                className="w-10 h-10 rounded-[2px] bg-white hover:bg-[#FFE600] text-black border-2 border-black shadow-[2px_2px_0_#000] flex items-center justify-center cursor-pointer transition-colors"
+                aria-label="View full district boundary"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3">
+                  <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                </svg>
+              </button>
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute right-12 top-1.5 bg-black text-[#FFE600] text-[10px] font-mono font-bold px-2 py-1 rounded-[2px] whitespace-nowrap">
+                Full District Bounds
+              </span>
+            </div>
+
+            {/* Dim markers toggle */}
+            <div className="relative group">
+              <button
+                type="button"
+                onClick={() => setIsDimmed((prev) => !prev)}
+                className={`w-10 h-10 rounded-[2px] border-2 border-black shadow-[2px_2px_0_#000] flex items-center justify-center cursor-pointer transition-colors ${
+                  isDimmed ? "bg-[#DC2626] text-white" : "bg-white hover:bg-black hover:text-[#FFE600] text-black"
+                }`}
+                aria-label="Toggle pin dimming"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3">
+                  <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </button>
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute right-12 top-1.5 bg-black text-[#FFE600] text-[10px] font-mono font-bold px-2 py-1 rounded-[2px] whitespace-nowrap">
+                {isDimmed ? "Restore Pins" : "Ghost Pins"}
+              </span>
+            </div>
+
+            {/* Toggle default proximity lines */}
+            <div className="relative group">
+              <button
+                type="button"
+                onClick={() => setShowDefaultLines((prev) => !prev)}
+                className={`w-10 h-10 rounded-[2px] border-2 border-black shadow-[2px_2px_0_#000] flex items-center justify-center cursor-pointer transition-colors ${
+                  showDefaultLines ? "bg-[#4ADE80] text-black" : "bg-white text-black hover:bg-[#FAF9F6]"
                 }`}
                 aria-label="Toggle distance lines"
               >
-                ⚡
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3">
+                  <circle cx="6" cy="18" r="3" />
+                  <circle cx="18" cy="6" r="3" />
+                  <path d="M8.5 15.5 15.5 8.5" />
+                </svg>
               </button>
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute right-14 top-2 bg-black text-[#FFC20E] text-[11px] font-mono font-bold px-2 py-1 rounded border border-[#FFC20E] shadow-[2px_2px_0_#111] whitespace-nowrap">
-                {showDefaultLines ? "Turn Lines Off" : "Show Distance Lines"}
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute right-12 top-1.5 bg-black text-[#FFE600] text-[10px] font-mono font-bold px-2 py-1 rounded-[2px] whitespace-nowrap">
+                {showDefaultLines ? "Hide Lines" : "Show Lines"}
               </span>
             </div>
           </div>
@@ -613,9 +654,9 @@ export default function DistrictMap({
 
       <MapContainer
         key={`map-container-${district.name}`}
-        center={districtBoundary ? districtBoundary.urbanCenter : [district.lat, district.lng]}
+        center={[district.lat, district.lng]}
         zoom={13}
-        minZoom={10}
+        minZoom={8}
         maxZoom={16}
         maxBounds={initialMaxBounds}
         maxBoundsViscosity={1.0}
@@ -627,9 +668,12 @@ export default function DistrictMap({
       >
         <MapInteractionController
           district={district}
+          students={students}
+          volunteers={volunteers}
           selectedStudent={selectedStudent}
           selectedVolunteer={selectedVolunteer}
           recenterTrigger={recenterCount}
+          fitPolygonTrigger={fitPolygonCount}
           onZoomChange={setCurrentZoom}
           onClearFocus={() => {
             onSelectStudent(null);
@@ -642,137 +686,169 @@ export default function DistrictMap({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {/* DISTRICT ADMINISTRATIVE BOUNDARY GEOJSON LAYER */}
-        {districtBoundary && (
+        {districtGeoJson && (
           <GeoJSON
             key={`boundary-layer-${district.name}`}
-            data={districtBoundary as any}
+            data={districtGeoJson}
             style={() => ({
-              color: "#111111",
+              color: "#000000",
               weight: 2.5,
-              dashArray: "4, 4",
-              fillColor: "#FFC20E",
-              fillOpacity: 0.05,
+              dashArray: "5, 5",
+              fillColor: "#FFE600",
+              fillOpacity: 0.06,
               lineCap: "round",
               lineJoin: "round",
             })}
           />
         )}
 
-        {/* PROXIMITY CONNECTION LINES: STRICTLY VOLUNTEER TO STUDENT */}
-        {activeConnections.map((conn) => {
-          const midLat = (conn.from[0] + conn.to[0]) / 2;
-          const midLng = (conn.from[1] + conn.to[1]) / 2;
+        {showProximityLines &&
+          activeConnections.map((conn) => {
+            const midLat = (conn.from[0] + conn.to[0]) / 2;
+            const midLng = (conn.from[1] + conn.to[1]) / 2;
 
-          const isSelectedPair = conn.isSelectedPair;
-          const lineWeight = isSelectedPair ? 5.5 : conn.isFocus ? 3.8 : 2.5;
-          const lineOpacity = isDimmed
-            ? 0.05
-            : isSelectedPair
-            ? 1.0
-            : selectedStudent
-            ? 0.45
-            : 0.88;
+            const isSelectedPair = conn.isSelectedPair;
+            const lineWeight = isSelectedPair ? 5 : conn.isFocus ? 3.5 : 2.5;
+            const lineOpacity = isDimmed
+              ? 0.05
+              : isSelectedPair
+              ? 1.0
+              : selectedStudent
+              ? 0.4
+              : 0.88;
 
-          // Always show badge for the focused volunteer-student pair, or for closer connections
-          const showBadge =
-            isSelectedPair ||
-            (!selectedStudent && (conn.dist <= 5.0 || currentZoom >= 13));
+            const showBadge =
+              isSelectedPair ||
+              (!selectedStudent && (conn.dist <= 5.0 || currentZoom >= 13));
 
-          return (
-            <Polyline
-              key={conn.id}
-              positions={[conn.from, conn.to]}
-              pathOptions={{
-                color: isSelectedPair ? "#111111" : conn.color,
-                weight: lineWeight,
-                opacity: lineOpacity,
-              }}
-            >
-              {!isDimmed && showBadge && (
-                <Tooltip
-                  position={[midLat, midLng]}
-                  permanent={true}
-                  direction="center"
-                  className="distance-badge"
-                >
-                  <span
-                    style={{
-                      backgroundColor: isSelectedPair ? "#111111" : conn.color,
-                      color: isSelectedPair ? "#FFD600" : "#FFFFFF",
-                      padding: isSelectedPair ? "3px 7px" : "2px 5px",
-                      borderRadius: "3px",
-                      fontFamily: "'DM Mono', monospace",
-                      fontSize: isSelectedPair ? "11px" : "10px",
-                      fontWeight: 900,
-                      border: "2px solid #111",
-                      boxShadow: isSelectedPair ? "3px 3px 0 #111" : "2px 2px 0 #111",
-                      whiteSpace: "nowrap",
-                    }}
+            return (
+              <Polyline
+                key={conn.id}
+                positions={[conn.from, conn.to]}
+                pathOptions={{
+                  color: isSelectedPair ? "#000000" : conn.color,
+                  weight: lineWeight,
+                  opacity: lineOpacity,
+                }}
+              >
+                {!isDimmed && showBadge && (
+                  <Tooltip
+                    position={[midLat, midLng]}
+                    permanent={true}
+                    direction="center"
+                    className="distance-badge"
                   >
-                    {conn.dist} km
-                  </span>
-                </Tooltip>
-              )}
-            </Polyline>
-          );
-        })}
+                    <span
+                      style={{
+                        backgroundColor: isSelectedPair ? "#000000" : conn.color,
+                        color: isSelectedPair ? "#FFE600" : "#FFFFFF",
+                        padding: isSelectedPair ? "3px 7px" : "2px 5px",
+                        borderRadius: "2px",
+                        fontFamily: "var(--mono)",
+                        fontSize: isSelectedPair ? "11px" : "10px",
+                        fontWeight: 700,
+                        border: "1.5px solid #000000",
+                        boxShadow: "2px 2px 0 #000000",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {conn.dist} km
+                    </span>
+                  </Tooltip>
+                )}
+              </Polyline>
+            );
+          })}
 
-        {/* District HQ Landmark Icon */}
-        <Marker position={[district.lat, district.lng]} icon={createHqIcon(markerOpacity)}>
-          <Popup>
-            <div className="p-1 font-sans text-xs">
-              <div className="font-bold text-sm text-[#111]">{district.name} HQ</div>
-              <div className="text-[11px] text-[#555] font-mono mt-0.5">
-                Total Applicants: <b>{district.totalApplicants.toLocaleString()}</b>
-              </div>
-            </div>
-          </Popup>
-        </Marker>
-
-        {/* ALL STUDENTS RENDERED */}
         {students.map((student) => {
-          const isHighIncome = student.familyIncome > 100000;
-          const hasOwnHouse = student.ownHouse === "Yes";
           const isSelected = selectedStudentId === student.id;
+          const pillBg = student.gender === "Male" ? "#2563EB" : "#EC4899";
           return (
             <Marker
               key={student.id}
               position={[student.lat, student.lng]}
-              icon={createStudentDotIcon(
-                student.opted,
-                isHighIncome,
-                hasOwnHouse,
+              icon={getStudentMarkerIcon(
+                student.gender,
                 isSelected,
+                zoomTier,
                 markerOpacity
               )}
               eventHandlers={{
                 click: (e) => {
                   L.DomEvent.stopPropagation(e);
-                  // Toggle student without clearing active volunteer
                   onSelectStudent(isSelected ? null : student.id);
                 },
               }}
-            />
+            >
+              {isSelected && (
+                <Tooltip
+                  direction="top"
+                  offset={[0, -16]}
+                  permanent={true}
+                  className="distance-badge"
+                >
+                  <span
+                    style={{
+                      backgroundColor: pillBg,
+                      color: "#FFFFFF",
+                      padding: "2px 7px",
+                      borderRadius: "2px",
+                      fontFamily: "var(--mono)",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      border: "2px solid #000000",
+                      boxShadow: "2px 2px 0 #000000",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {student.name}
+                  </span>
+                </Tooltip>
+              )}
+            </Marker>
           );
         })}
 
-        {/* ALL VOLUNTEERS RENDERED (No clipping popups above pins) */}
         {volunteers.map((vol) => {
           const isSelected = selectedVolunteerId === vol.id;
           return (
             <Marker
               key={vol.id}
               position={[vol.lat, vol.lng]}
-              icon={createVolunteerDotIcon(isSelected, markerOpacity)}
+              icon={getVolunteerMarkerIcon(isSelected, zoomTier, markerOpacity)}
               eventHandlers={{
                 click: (e) => {
                   L.DomEvent.stopPropagation(e);
-                  // Toggle volunteer without clearing active student
                   onSelectVolunteer(isSelected ? null : vol.id);
                 },
               }}
-            />
+            >
+              {isSelected && (
+                <Tooltip
+                  direction="top"
+                  offset={[0, -16]}
+                  permanent={true}
+                  className="distance-badge"
+                >
+                  <span
+                    style={{
+                      backgroundColor: "#FFE600",
+                      color: "#000000",
+                      padding: "2px 7px",
+                      borderRadius: "2px",
+                      fontFamily: "var(--mono)",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      border: "2px solid #000000",
+                      boxShadow: "2px 2px 0 #000000",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {vol.name}
+                  </span>
+                </Tooltip>
+              )}
+            </Marker>
           );
         })}
       </MapContainer>

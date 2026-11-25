@@ -29,9 +29,93 @@ export interface District {
   female: number;
   lat: number;
   lng: number;
-  delta: number;
   students: Student[];
   volunteers: Volunteer[];
+}
+
+export interface NearbyStudent {
+  student: Student;
+  dist: number;
+}
+
+/** Returns nearby students sorted by distance, plus closest-4 fallback when none sit within maxKm. */
+export function getNearbyStudents(
+  volunteer: Pick<Volunteer, "lat" | "lng">,
+  students: Student[],
+  maxKm = 5.0
+): { withinRadius: NearbyStudent[]; displayList: NearbyStudent[]; usedFallback: boolean } {
+  const allSorted = students
+    .map((student) => ({
+      student,
+      dist: getDistanceKm(volunteer.lat, volunteer.lng, student.lat, student.lng),
+    }))
+    .sort((a, b) => a.dist - b.dist);
+
+  const withinRadius = allSorted.filter((item) => item.dist <= maxKm);
+  const usedFallback = withinRadius.length === 0;
+  return {
+    withinRadius,
+    displayList: usedFallback ? allSorted.slice(0, 4) : withinRadius,
+    usedFallback,
+  };
+}
+
+export interface NearbyVolunteer {
+  volunteer: Volunteer;
+  dist: number;
+}
+
+/** Returns nearby volunteers sorted by distance, plus closest-3 fallback when none sit within maxKm. */
+export function getNearbyVolunteers(
+  student: Pick<Student, "lat" | "lng">,
+  volunteers: Volunteer[],
+  maxKm = 5.0
+): { withinRadius: NearbyVolunteer[]; displayList: NearbyVolunteer[]; usedFallback: boolean } {
+  const allSorted = volunteers
+    .map((volunteer) => ({
+      volunteer,
+      dist: getDistanceKm(student.lat, student.lng, volunteer.lat, volunteer.lng),
+    }))
+    .sort((a, b) => a.dist - b.dist);
+
+  const withinRadius = allSorted.filter((item) => item.dist <= maxKm);
+  const usedFallback = withinRadius.length === 0;
+  return {
+    withinRadius,
+    displayList: usedFallback ? allSorted.slice(0, 3) : withinRadius,
+    usedFallback,
+  };
+}
+
+/** Filters district students by category pill and name/marks search query. */
+export function filterStudents(
+  students: Student[],
+  categoryFilter: string,
+  searchQuery: string
+): Student[] {
+  const categoryPredicates: Record<string, (s: Student) => boolean> = {
+    eng: (s) => s.opted === "Eng",
+    arts: (s) => s.opted === "Arts",
+    male: (s) => s.gender === "Male",
+    female: (s) => s.gender === "Female",
+    both: (s) => s.parents === "Both",
+    single: (s) => s.parents === "Single",
+    orphan: (s) => s.parents === "Orphan",
+    above_1lakh: (s) => s.familyIncome > 100000,
+    below_1lakh: (s) => s.familyIncome <= 100000,
+    own_house: (s) => s.ownHouse === "Yes",
+  };
+
+  const predicate = categoryPredicates[categoryFilter];
+  let list = predicate ? students.filter(predicate) : students;
+
+  const q = searchQuery.toLowerCase().trim();
+  if (q) {
+    list = list.filter(
+      (s) => s.name.toLowerCase().includes(q) || s.marks.toString().includes(q)
+    );
+  }
+  return list;
 }
 
 // Haversine distance calculator in kilometers
@@ -102,6 +186,9 @@ function generateMockData(lat: number, lng: number, seed: number) {
     const pvAssigned = pvCount + 4 + ((j * 5 + seed) % 16);
     const vAngle = ((j * 30 + 15) * Math.PI) / 180;
     const vDist = 0.02 + ((j * 9 + seed) % 14) * 0.004;
+    const vLat = lat + vDist * Math.cos(vAngle);
+    const vLng = lng + vDist * Math.sin(vAngle);
+    const nearCount = students.filter((s) => getDistanceKm(vLat, vLng, s.lat, s.lng) <= 5.0).length;
 
     volunteers.push({
       id: `V-${seed.toString().padStart(2, "0")}-${(j + 1).toString().padStart(2, "0")}`,
@@ -109,9 +196,9 @@ function generateMockData(lat: number, lng: number, seed: number) {
       college: colleges[(j + seed) % colleges.length],
       pvCount,
       pvAssigned,
-      nearToApplicants: 4 + ((j * 3 + seed) % 15),
-      lat: lat + vDist * Math.cos(vAngle),
-      lng: lng + vDist * Math.sin(vAngle),
+      nearToApplicants: nearCount,
+      lat: vLat,
+      lng: vLng,
     });
   }
 
@@ -169,7 +256,6 @@ export const DISTRICTS: District[] = rawDistricts.map((d, idx) => {
     female: d.total - d.male,
     lat: d.lat,
     lng: d.lng,
-    delta: 0.28,
     students,
     volunteers,
   };
